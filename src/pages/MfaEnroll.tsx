@@ -69,9 +69,10 @@ export default function MfaEnroll() {
               {enrolling ? (
                 <div className="w-40 h-40 rounded-lg bg-brand-border/30 animate-pulse mx-auto" />
               ) : qrCode ? (
-                <div
-                  className="w-44 h-44 rounded-lg bg-white p-2 mx-auto [&_svg]:w-full [&_svg]:h-full"
-                  dangerouslySetInnerHTML={{ __html: qrCode }}
+                <img
+                  src={qrCode}
+                  alt="Scan this QR code with your authenticator app"
+                  className="w-44 h-44 rounded-lg bg-white p-2 mx-auto"
                 />
               ) : null}
             </div>
