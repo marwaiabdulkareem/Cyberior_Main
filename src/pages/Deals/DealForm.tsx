@@ -113,7 +113,11 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
   }, [watchPrice, selectedProduct])
 
   useEffect(() => {
-    if (!selectedProduct || !watchStartDate || watchPaymentType === 'full') return
+    if (!selectedProduct || !watchStartDate) return
+    if (watchPaymentType === 'full') {
+      replace([])
+      return
+    }
     let count: number
     if (watchPaymentType === 'monthly') count = 1
     else count = planToInstallmentCount(selectedProduct.default_plan as import('@/types').DefaultPlan)
@@ -121,7 +125,13 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
     const price = watchPrice || 0
     const amountEach = count > 0 ? Math.round((price / count) * 100) / 100 : price
     const dates = generateInstallmentDates(watchStartDate, count, 30)
-    replace(dates.map((d) => ({ due_date: d, amount: amountEach })))
+    replace(dates.map((d, i) => ({
+      due_date: d,
+      // Last installment absorbs any rounding remainder
+      amount: i === count - 1
+        ? Math.round((price - amountEach * (count - 1)) * 100) / 100
+        : amountEach,
+    })))
   }, [watchPaymentType, selectedProduct, watchStartDate])
 
   const mutation = useMutation({
@@ -147,7 +157,8 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
         const { error } = await supabase.from('deals').update(dealPayload).eq('id', deal.id)
         if (error) throw error
         dealId = deal.id
-        // Delete old payment plan + installments
+        // Explicitly delete old installments first, then payment plan
+        await supabase.from('installments').delete().eq('deal_id', dealId)
         await supabase.from('payment_plans').delete().eq('deal_id', dealId)
       } else {
         const { data: inserted, error } = await supabase
@@ -159,7 +170,7 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
       const installs = data.installments ?? []
       const totalAmount = installs.reduce((s, i) => s + i.amount, 0) || data.deal_price_usd
 
-      const { data: plan } = await supabase
+      const { data: plan, error: planError } = await supabase
         .from('payment_plans')
         .insert({
           deal_id: dealId,
@@ -170,9 +181,10 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
         })
         .select()
         .single()
+      if (planError) throw planError
 
       if (installs.length > 0 && plan) {
-        await supabase.from('installments').insert(
+        const { error: instError } = await supabase.from('installments').insert(
           installs.map((inst, i) => ({
             deal_id: dealId,
             payment_plan_id: plan.id,
@@ -182,9 +194,10 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
             status: 'pending',
           }))
         )
-      } else if (!deal) {
-        // Full payment — one installment
-        await supabase.from('installments').insert({
+        if (instError) throw instError
+      } else {
+        // Full payment — one installment (works for both new and edited deals)
+        const { error: instError } = await supabase.from('installments').insert({
           deal_id: dealId,
           payment_plan_id: plan?.id,
           installment_number: 1,
@@ -192,6 +205,7 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
           due_date: data.start_date,
           status: 'pending',
         })
+        if (instError) throw instError
       }
 
       await supabase.from('activity_logs').insert({
