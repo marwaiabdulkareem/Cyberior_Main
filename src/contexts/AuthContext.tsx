@@ -40,12 +40,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function checkMfaStatus() {
     setMfaStatus('checking')
-    const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-    if (!data) return
-    const { currentLevel, nextLevel } = data
-    if (currentLevel === 'aal2') setMfaStatus('verified')
-    else if (nextLevel === 'aal2') setMfaStatus('required')
-    else setMfaStatus('enroll_required')
+    try {
+      const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+      if (!data) { setMfaStatus('enroll_required'); return }
+      const { currentLevel, nextLevel } = data
+      if (currentLevel === 'aal2') setMfaStatus('verified')
+      else if (nextLevel === 'aal2') setMfaStatus('required')
+      else setMfaStatus('enroll_required')
+    } catch {
+      setMfaStatus('enroll_required')
+    }
   }
 
   useEffect(() => {

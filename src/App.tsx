@@ -56,7 +56,12 @@ function AppRoutes() {
   return (
     <Routes>
       {/* Public routes */}
-      <Route path="/login" element={isFullyAuthenticated ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={
+        !user || mfaStatus === null || mfaStatus === 'checking' ? <Login /> :
+        mfaStatus === 'verified' ? <Navigate to="/" replace /> :
+        mfaStatus === 'required' ? <Navigate to="/mfa-verify" replace /> :
+        <Navigate to="/mfa-enroll" replace />
+      } />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
 
