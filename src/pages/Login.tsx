@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { ShieldCheck, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -82,6 +83,15 @@ export default function Login() {
             <Button type="submit" loading={loading} className="w-full">
               Sign In
             </Button>
+
+            <div className="text-center">
+              <Link
+                to="/forgot-password"
+                className="text-xs text-slate-500 hover:text-brand-teal transition-colors"
+              >
+                Forgot your password?
+              </Link>
+            </div>
           </form>
         </div>
 
