@@ -16,7 +16,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   DEAL_STATUS_LABELS, PAYMENT_METHOD_LABELS, CURRENCY_LABELS,
   INSTALLMENT_STATUS_LABELS,
-  type Deal, type Installment, type Note, type InstallmentStatus, type PaymentPlan,
+  type Deal, type Installment, type Note, type InstallmentStatus, type PaymentPlan, type Currency,
 } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -34,7 +34,9 @@ export default function DealDetail() {
   const [payModal, setPayModal] = useState<PayInstallmentModal>({ installment: null })
   const [noteText, setNoteText] = useState('')
   const [payData, setPayData] = useState({
-    amount_paid: 0, amount_paid_local: 0, paid_date: '', payment_method: 'bank_transfer' as string,
+    amount_paid: 0, amount_paid_local: 0,
+    currency: 'USD' as Currency, other_currency_label: '',
+    paid_date: '', payment_method: 'bank_transfer' as string,
     proof_url: '', notes: '', status: 'paid' as InstallmentStatus,
   })
   const [refundModal, setRefundModal] = useState(false)
@@ -95,7 +97,9 @@ export default function DealDetail() {
       const inst = payModal.installment!
       const { error } = await supabase.from('installments').update({
         amount_paid: payData.amount_paid,
-        amount_paid_local: payData.amount_paid_local || null,
+        amount_paid_local: payData.currency === 'USD' ? null : (payData.amount_paid_local || null),
+        currency: payData.currency,
+        other_currency_label: payData.currency === 'OTHER' ? payData.other_currency_label : null,
         paid_date: payData.paid_date,
         payment_method: payData.payment_method,
         proof_url: payData.proof_url || null,
@@ -159,10 +163,24 @@ export default function DealDetail() {
   const canEdit = isAdmin || (isAgent && deal.agent?.profile_id === user?.id)
   const canPay = isAdmin || isFinance || (isAgent && deal.agent?.profile_id === user?.id)
 
-  const currency = deal.payment_plan?.currency ?? 'USD'
-  const otherLabel = deal.payment_plan?.other_currency_label ?? null
-  const totalDueLocal = installments.reduce((s, i) => s + (i.amount_due_local || 0), 0)
-  const totalPaidLocal = installments.reduce((s, i) => s + (i.amount_paid_local || 0), 0)
+  // Each installment can be paid in a different currency, so local-currency
+  // totals are grouped per currency rather than summed into one number.
+  const localTotalsByCurrency = (field: 'amount_due_local' | 'amount_paid_local') => {
+    const map = new Map<Currency, { amount: number; otherLabel: string | null }>()
+    installments.forEach((i) => {
+      if (i.currency === 'USD') return
+      const val = i[field]
+      if (!val) return
+      const bucket = map.get(i.currency) ?? { amount: 0, otherLabel: i.other_currency_label }
+      bucket.amount += val
+      map.set(i.currency, bucket)
+    })
+    return Array.from(map.entries())
+  }
+  const dueLocalTotals = localTotalsByCurrency('amount_due_local')
+  const paidLocalTotals = localTotalsByCurrency('amount_paid_local')
+  const expectedCurrency = deal.payment_plan?.currency ?? 'USD'
+  const expectedOtherLabel = deal.payment_plan?.other_currency_label ?? null
 
   return (
     <Layout title="Deal Detail">
@@ -233,20 +251,20 @@ export default function DealDetail() {
             <div>
               <p className="text-xs text-slate-500">Deal Price</p>
               <p className="text-lg font-bold text-brand-teal">{formatCurrency(deal.deal_price_usd)}</p>
-              {currency !== 'USD' && totalDueLocal > 0 && (
-                <p className="text-xs text-slate-500">≈ {formatCurrency(totalDueLocal, currency, otherLabel)}</p>
-              )}
+              {dueLocalTotals.map(([cur, { amount, otherLabel }]) => (
+                <p key={cur} className="text-xs text-slate-500">≈ {formatCurrency(amount, cur, otherLabel)}</p>
+              ))}
               {deal.deal_price_iqd && (
                 <p className="text-xs text-slate-500">{formatCurrency(deal.deal_price_iqd, 'IQD')}</p>
               )}
             </div>
             <div>
-              <p className="text-xs text-slate-500">Currency</p>
+              <p className="text-xs text-slate-500">Expected Currency</p>
               <p className="text-sm text-slate-200">
                 {deal.payment_plan
-                  ? (deal.payment_plan.currency === 'OTHER'
-                    ? (deal.payment_plan.other_currency_label || 'Other')
-                    : CURRENCY_LABELS[deal.payment_plan.currency])
+                  ? (expectedCurrency === 'OTHER'
+                    ? (expectedOtherLabel || 'Other')
+                    : CURRENCY_LABELS[expectedCurrency])
                   : '—'}
               </p>
             </div>
@@ -283,9 +301,9 @@ export default function DealDetail() {
             <div className="text-center">
               <p className="text-xs text-slate-500">Paid</p>
               <p className="text-xl font-bold text-green-400">{formatCurrency(totalPaid)}</p>
-              {currency !== 'USD' && totalPaidLocal > 0 && (
-                <p className="text-xs text-slate-500">≈ {formatCurrency(totalPaidLocal, currency, otherLabel)}</p>
-              )}
+              {paidLocalTotals.map(([cur, { amount, otherLabel }]) => (
+                <p key={cur} className="text-xs text-slate-500">≈ {formatCurrency(amount, cur, otherLabel)}</p>
+              ))}
             </div>
             <div className="text-center">
               <p className="text-xs text-slate-500">Remaining</p>
@@ -325,14 +343,14 @@ export default function DealDetail() {
                     </div>
                     <p className="text-sm font-medium text-slate-200 mt-1">
                       {formatCurrency(inst.amount_due)}
-                      {currency !== 'USD' && inst.amount_due_local ? (
-                        <span className="text-xs text-slate-500"> (≈ {formatCurrency(inst.amount_due_local, currency, otherLabel)})</span>
+                      {inst.currency !== 'USD' && inst.amount_due_local ? (
+                        <span className="text-xs text-slate-500"> (≈ {formatCurrency(inst.amount_due_local, inst.currency, inst.other_currency_label)})</span>
                       ) : null}
                     </p>
                     {inst.amount_paid > 0 && inst.amount_paid < inst.amount_due && (
                       <p className="text-xs text-slate-500">
                         Paid: {formatCurrency(inst.amount_paid)}
-                        {currency !== 'USD' && inst.amount_paid_local ? ` (≈ ${formatCurrency(inst.amount_paid_local, currency, otherLabel)})` : ''}
+                        {inst.currency !== 'USD' && inst.amount_paid_local ? ` (≈ ${formatCurrency(inst.amount_paid_local, inst.currency, inst.other_currency_label)})` : ''}
                       </p>
                     )}
                     <p className="text-xs text-slate-500 mt-0.5">Due: {formatDate(inst.due_date)}</p>
@@ -351,6 +369,8 @@ export default function DealDetail() {
                             setPayData({
                               amount_paid: inst.amount_due - inst.amount_paid,
                               amount_paid_local: (inst.amount_due_local ?? 0) - (inst.amount_paid_local ?? 0),
+                              currency: inst.currency,
+                              other_currency_label: inst.other_currency_label ?? '',
                               paid_date: new Date().toISOString().slice(0, 10),
                               payment_method: 'bank_transfer',
                               proof_url: '', notes: '', status: 'paid',
@@ -443,9 +463,26 @@ export default function DealDetail() {
             value={payData.amount_paid}
             onChange={(e) => setPayData((p) => ({ ...p, amount_paid: Number(e.target.value) }))}
           />
-          {currency !== 'USD' && (
+          <Select
+            label="Currency Paid In *"
+            value={payData.currency}
+            onChange={(e) => setPayData((p) => ({ ...p, currency: e.target.value as Currency }))}
+          >
+            {Object.entries(CURRENCY_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </Select>
+          {payData.currency === 'OTHER' && (
             <Input
-              label={`Amount Paid (${currency === 'OTHER' ? (otherLabel || 'local currency') : currency})`}
+              label="Currency Name *"
+              placeholder="e.g. EUR, AED…"
+              value={payData.other_currency_label}
+              onChange={(e) => setPayData((p) => ({ ...p, other_currency_label: e.target.value }))}
+            />
+          )}
+          {payData.currency !== 'USD' && (
+            <Input
+              label={`Amount Paid (${payData.currency === 'OTHER' ? (payData.other_currency_label || 'local currency') : payData.currency})`}
               type="number"
               step="0.01"
               value={payData.amount_paid_local}

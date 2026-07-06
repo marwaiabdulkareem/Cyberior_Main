@@ -177,6 +177,11 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
         .single()
       if (planError) throw planError
 
+      // currency here is just the expected/default for this deal — the
+      // agent confirms (or changes) it for real when recording each payment
+      const defaultCurrency = data.currency
+      const defaultOtherLabel = data.currency === 'OTHER' ? data.other_currency_label ?? null : null
+
       const instRows = installs.length > 0
         ? installs.map((inst, i) => ({
             deal_id: dealId,
@@ -184,6 +189,8 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
             installment_number: i + 1,
             amount_due: inst.amount,
             amount_due_local: inst.amount_local || null,
+            currency: defaultCurrency,
+            other_currency_label: defaultOtherLabel,
             due_date: inst.due_date,
             status: 'pending',
           }))
@@ -193,6 +200,8 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
             installment_number: 1,
             amount_due: totalAmount,
             amount_due_local: null,
+            currency: defaultCurrency,
+            other_currency_label: defaultOtherLabel,
             due_date: data.start_date,
             status: 'pending',
           }]
@@ -285,12 +294,15 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
               </option>
             )}
           </Select>
-          <Select label="Currency *" {...register('currency')}>
+          <Select label="Expected Currency *" {...register('currency')}>
             {Object.entries(CURRENCY_LABELS).map(([v, l]) => (
               <option key={v} value={v}>{l}</option>
             ))}
           </Select>
         </div>
+        <p className="text-xs text-slate-500 -mt-3">
+          Just a default — you'll confirm (or change) the actual currency each time a payment is recorded.
+        </p>
 
         {watchCurrency === 'OTHER' && (
           <Input

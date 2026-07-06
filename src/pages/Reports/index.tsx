@@ -57,42 +57,56 @@ interface CommissionRow {
   commission: number
 }
 
+function collectedAmountOf(i: Installment): number {
+  // Non-USD payments record the real amount collected in that currency
+  // separately (amount_paid_local); amount_paid stays USD-only.
+  return i.currency === 'USD' ? i.amount_paid : (i.amount_paid_local ?? i.amount_paid)
+}
+
 export default function Reports() {
   const [agentFilter, setAgentFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [commissionMonth, setCommissionMonth] = useState(() => format(new Date(), 'yyyy-MM'))
+  const [periodFrom, setPeriodFrom] = useState(() => format(new Date(), 'yyyy-MM-01'))
+  const [periodTo, setPeriodTo] = useState(() => format(new Date(), 'yyyy-MM-dd'))
 
   const { data, isLoading } = useReportData(agentFilter, productFilter, dateFrom, dateTo)
   const deals = data?.deals ?? []
   const installments = data?.installments ?? []
   const agents = data?.agents ?? []
 
+  const paidInPeriod = useMemo(() => installments.filter(
+    (i) => i.status === 'paid' && i.paid_date && i.paid_date >= periodFrom && i.paid_date <= periodTo
+  ), [installments, periodFrom, periodTo])
+
+  // Total actually collected in the period, split per currency — this is
+  // the "how much revenue came in" figure, kept separate per currency.
+  const periodTotalsByCurrency = useMemo(() => {
+    const map = new Map<Currency, { collected: number; otherLabel: string | null }>()
+    paidInPeriod.forEach((i) => {
+      const bucket = map.get(i.currency) ?? { collected: 0, otherLabel: i.other_currency_label }
+      bucket.collected += collectedAmountOf(i)
+      map.set(i.currency, bucket)
+    })
+    return Array.from(map.entries())
+  }, [paidInPeriod])
+
   // Commission is paid on money actually collected, split out per currency —
   // an agent's IQD collections and USD collections are never mixed together.
   const commissionRows = useMemo(() => {
-    const paidThisMonth = installments.filter(
-      (i) => i.status === 'paid' && i.paid_date && i.paid_date.startsWith(commissionMonth)
-    )
-
     const rows: CommissionRow[] = []
     agents.forEach((agent) => {
-      const agentPaid = paidThisMonth.filter((i) => i.deal?.agent_id === agent.id)
+      const agentPaid = paidInPeriod.filter((i) => i.deal?.agent_id === agent.id)
       if (agentPaid.length === 0) {
         rows.push({ agentName: agent.name, rate: agent.commission_rate, currency: 'USD', otherLabel: null, collected: 0, commission: 0 })
         return
       }
       const byCurrency = new Map<Currency, { collected: number; otherLabel: string | null }>()
       agentPaid.forEach((i) => {
-        const currency = (i.deal?.payment_plan?.currency ?? 'USD') as Currency
-        const otherLabel = i.deal?.payment_plan?.other_currency_label ?? null
-        // Non-USD deals record the real amount collected in that currency
-        // separately (amount_paid_local); amount_paid stays USD-only.
-        const collectedAmount = currency === 'USD' ? i.amount_paid : (i.amount_paid_local ?? i.amount_paid)
-        const bucket = byCurrency.get(currency) ?? { collected: 0, otherLabel }
-        bucket.collected += collectedAmount
-        byCurrency.set(currency, bucket)
+        const bucket = byCurrency.get(i.currency) ?? { collected: 0, otherLabel: i.other_currency_label }
+        bucket.collected += collectedAmountOf(i)
+        byCurrency.set(i.currency, bucket)
       })
       byCurrency.forEach((bucket, currency) => {
         rows.push({
@@ -106,7 +120,7 @@ export default function Reports() {
       })
     })
     return rows
-  }, [installments, agents, commissionMonth])
+  }, [paidInPeriod, agents])
 
   const totalRevenue = deals.reduce((s, d) => s + d.deal_price_usd, 0)
   const totalCollected = installments.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount_paid, 0)
@@ -258,21 +272,42 @@ export default function Reports() {
           </div>
         </div>
 
-        {/* Monthly Commission by Currency */}
+        {/* Commission & Collections by Period */}
         <div className="rounded-xl bg-brand-surface border border-brand-border">
           <div className="px-5 py-4 border-b border-brand-border flex items-center justify-between flex-wrap gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-200">Monthly Commission by Currency</h3>
+              <h3 className="text-sm font-semibold text-slate-200">Commission & Collections by Period</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Commission on money actually collected this month — kept separate per currency, never converted.
+                Money actually collected in this date range, and commission on it — kept separate per currency, never converted.
               </p>
             </div>
-            <input
-              type="month"
-              value={commissionMonth}
-              onChange={(e) => setCommissionMonth(e.target.value)}
-              className="rounded-lg bg-brand-navy border border-brand-border text-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={periodFrom}
+                onChange={(e) => setPeriodFrom(e.target.value)}
+                className="rounded-lg bg-brand-navy border border-brand-border text-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
+              />
+              <span className="text-xs text-slate-500">to</span>
+              <input
+                type="date"
+                value={periodTo}
+                onChange={(e) => setPeriodTo(e.target.value)}
+                className="rounded-lg bg-brand-navy border border-brand-border text-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
+              />
+            </div>
+          </div>
+          <div className="px-5 py-3 border-b border-brand-border flex flex-wrap gap-x-6 gap-y-1">
+            <span className="text-xs text-slate-500">Total Collected:</span>
+            {periodTotalsByCurrency.length === 0 ? (
+              <span className="text-xs text-slate-500">—</span>
+            ) : (
+              periodTotalsByCurrency.map(([cur, { collected, otherLabel }]) => (
+                <span key={cur} className="text-xs font-medium text-brand-teal">
+                  {formatCurrency(collected, cur, otherLabel)}
+                </span>
+              ))
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
