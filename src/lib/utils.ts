@@ -1,18 +1,28 @@
 import { clsx, type ClassValue } from 'clsx'
 import { format, isAfter, isBefore, parseISO, differenceInDays } from 'date-fns'
-import type { InstallmentStatus, DefaultPlan } from '@/types'
+import type { InstallmentStatus, Currency } from '@/types'
 
 export function cn(...inputs: ClassValue[]) {
   return clsx(inputs)
 }
 
-export function formatCurrency(amount: number, currency: 'USD' | 'IQD' = 'USD'): string {
+export function formatCurrency(amount: number, currency: Currency = 'USD', otherLabel?: string | null): string {
   if (currency === 'IQD') {
     return new Intl.NumberFormat('ar-IQ', {
       style: 'currency',
       currency: 'IQD',
       maximumFractionDigits: 0,
     }).format(amount)
+  }
+  if (currency === 'TRY') {
+    return new Intl.NumberFormat('tr-TR', {
+      style: 'currency',
+      currency: 'TRY',
+      maximumFractionDigits: 2,
+    }).format(amount)
+  }
+  if (currency === 'OTHER') {
+    return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)} ${otherLabel || '(other currency)'}`
   }
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -64,19 +74,6 @@ export function calcCollectionRate(collected: number, total: number): number {
 
 export function calcCommission(dealPrice: number, commissionRate: number): number {
   return (dealPrice * commissionRate) / 100
-}
-
-export function planToInstallmentCount(plan: DefaultPlan): number {
-  const map: Record<DefaultPlan, number> = {
-    one_shot: 1,
-    two_shots: 2,
-    three_shots: 3,
-    five_shots: 5,
-    seven_shots: 7,
-    monthly: 1,
-    custom: 1,
-  }
-  return map[plan] ?? 1
 }
 
 export function generateInstallmentDates(

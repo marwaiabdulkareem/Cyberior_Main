@@ -1,34 +1,35 @@
 import { useState, useEffect } from 'react'
-import { useForm, useFieldArray, Controller } from 'react-hook-form'
+import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { AlertCircle, Plus, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, Textarea } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
-import { formatCurrency, planToInstallmentCount, generateInstallmentDates } from '@/lib/utils'
-import { PLAN_LABELS, type Deal } from '@/types'
+import { formatCurrency, generateInstallmentDates } from '@/lib/utils'
+import { CURRENCY_LABELS, type Deal } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
-import { format, addMonths } from 'date-fns'
+import { format } from 'date-fns'
 
 const schema = z.object({
   customer_id: z.string().min(1, 'Customer is required'),
   product_id: z.string().min(1, 'Program is required'),
   agent_id: z.string().min(1, 'Agent is required'),
   deal_price_usd: z.coerce.number().positive('Price must be positive'),
-  deal_price_iqd: z.coerce.number().optional(),
-  discount_amount: z.coerce.number().min(0).default(0),
-  payment_type: z.enum(['full', 'installment', 'monthly', 'custom']),
+  payment_type: z.enum(['full', 'installment']),
   start_date: z.string().min(1, 'Start date is required'),
   notes: z.string().optional(),
-  below_min_note: z.string().optional(),
-  currency: z.enum(['USD', 'IQD']).default('USD'),
+  currency: z.enum(['USD', 'IQD', 'TRY', 'OTHER']).default('USD'),
+  other_currency_label: z.string().optional(),
   installments: z.array(z.object({
     due_date: z.string().min(1, 'Due date required'),
     amount: z.coerce.number().positive('Amount must be positive'),
   })).optional(),
+}).superRefine((data, ctx) => {
+  if (data.currency === 'OTHER' && !data.other_currency_label?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['other_currency_label'], message: 'Enter the currency name' })
+  }
 })
 
 type FormData = z.infer<typeof schema>
@@ -41,9 +42,8 @@ interface DealFormProps {
 
 export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
   const { user } = useAuth()
-  const [belowMin, setBelowMin] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<{
-    min_price_usd: number; list_price_usd: number; default_plan: string
+    one_time_price_usd: number; installment_monthly_price_usd: number; installment_months: number
   } | null>(null)
 
   const { data: customers = [] } = useQuery({
@@ -77,12 +77,11 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
       product_id: deal?.product_id ?? '',
       agent_id: deal?.agent_id ?? '',
       deal_price_usd: deal?.deal_price_usd ?? 0,
-      deal_price_iqd: deal?.deal_price_iqd ?? undefined,
-      discount_amount: deal?.discount_amount ?? 0,
-      payment_type: deal?.payment_type ?? 'full',
+      payment_type: deal?.payment_type === 'installment' ? 'installment' : 'full',
       start_date: deal?.start_date ?? format(new Date(), 'yyyy-MM-dd'),
       notes: deal?.notes ?? '',
-      currency: 'USD',
+      currency: deal?.payment_plan?.currency ?? 'USD',
+      other_currency_label: deal?.payment_plan?.other_currency_label ?? '',
       installments: [],
     },
   })
@@ -93,61 +92,56 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
   const watchPrice = watch('deal_price_usd')
   const watchPaymentType = watch('payment_type')
   const watchStartDate = watch('start_date')
+  const watchCurrency = watch('currency')
+  const watchInstallments = watch('installments')
+
+  const installmentsTotal = (watchInstallments ?? []).reduce((s, i) => s + (Number(i?.amount) || 0), 0)
+  const displayedPrice = watchPaymentType === 'installment' ? installmentsTotal : watchPrice
+  const hasInstallmentPlan = !!selectedProduct
+    && selectedProduct.installment_months > 0
+    && selectedProduct.installment_monthly_price_usd > 0
 
   useEffect(() => {
     if (!watchProduct) return
     const product = products.find((p: { id: string }) => p.id === watchProduct)
     if (!product) return
     setSelectedProduct(product)
-    setValue('deal_price_usd', product.list_price_usd)
-
-    // Auto-set installments based on default plan
-    const count = planToInstallmentCount(product.default_plan as import('@/types').DefaultPlan)
-    const payType = count === 1 ? 'full' : 'installment'
-    setValue('payment_type', product.default_plan === 'monthly' ? 'monthly' : payType)
+    const hasPlan = product.installment_months > 0 && product.installment_monthly_price_usd > 0
+    if (!hasPlan) setValue('payment_type', 'full')
   }, [watchProduct, products])
 
   useEffect(() => {
-    if (!selectedProduct) return
-    setBelowMin(watchPrice < selectedProduct.min_price_usd && selectedProduct.min_price_usd > 0)
-  }, [watchPrice, selectedProduct])
-
-  useEffect(() => {
     if (!selectedProduct || !watchStartDate) return
+
     if (watchPaymentType === 'full') {
+      setValue('deal_price_usd', selectedProduct.one_time_price_usd)
       replace([])
       return
     }
-    let count: number
-    if (watchPaymentType === 'monthly') count = 1
-    else count = planToInstallmentCount(selectedProduct.default_plan as import('@/types').DefaultPlan)
 
-    const price = watchPrice || 0
-    const amountEach = count > 0 ? Math.round((price / count) * 100) / 100 : price
+    const count = selectedProduct.installment_months
+    const monthly = selectedProduct.installment_monthly_price_usd
+    setValue('deal_price_usd', Math.round(monthly * count * 100) / 100)
     const dates = generateInstallmentDates(watchStartDate, count, 30)
-    replace(dates.map((d, i) => ({
-      due_date: d,
-      // Last installment absorbs any rounding remainder
-      amount: i === count - 1
-        ? Math.round((price - amountEach * (count - 1)) * 100) / 100
-        : amountEach,
-    })))
+    replace(dates.map((d) => ({ due_date: d, amount: monthly })))
   }, [watchPaymentType, selectedProduct, watchStartDate])
 
   const mutation = useMutation({
     mutationFn: async (data: FormData) => {
+      const installs = data.installments ?? []
+      const totalAmount = installs.reduce((s, i) => s + i.amount, 0) || data.deal_price_usd
+
       const dealPayload = {
         customer_id: data.customer_id,
         product_id: data.product_id,
         agent_id: data.agent_id,
-        deal_price_usd: data.deal_price_usd,
-        deal_price_iqd: data.deal_price_iqd,
-        discount_amount: data.discount_amount,
+        deal_price_usd: totalAmount,
+        discount_amount: 0,
         payment_type: data.payment_type,
         start_date: data.start_date,
         notes: data.notes,
-        below_min_override: belowMin,
-        below_min_note: belowMin ? data.below_min_note : null,
+        below_min_override: false,
+        below_min_note: null,
         created_by: user?.id,
       }
 
@@ -167,9 +161,6 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
         dealId = inserted.id
       }
 
-      const installs = data.installments ?? []
-      const totalAmount = installs.reduce((s, i) => s + i.amount, 0) || data.deal_price_usd
-
       const { data: plan, error: planError } = await supabase
         .from('payment_plans')
         .insert({
@@ -178,6 +169,7 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
           num_installments: installs.length || 1,
           installment_amount: installs[0]?.amount,
           currency: data.currency,
+          other_currency_label: data.currency === 'OTHER' ? data.other_currency_label : null,
         })
         .select()
         .single()
@@ -201,7 +193,7 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
           deal_id: dealId,
           payment_plan_id: plan?.id,
           installment_number: 1,
-          amount_due: data.deal_price_usd,
+          amount_due: totalAmount,
           due_date: data.start_date,
           status: 'pending',
         })
@@ -218,9 +210,6 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
     onSuccess: onClose,
   })
 
-  const totalInstallments = fields.reduce((s, f) => s + (Number(f.amount) || 0), 0)
-  const priceMismatch = fields.length > 0 && Math.abs(totalInstallments - watchPrice) > 0.01
-
   return (
     <Modal
       open
@@ -233,7 +222,6 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
           <Button
             onClick={handleSubmit((d) => mutation.mutate(d))}
             loading={mutation.isPending}
-            disabled={priceMismatch}
           >
             {deal ? 'Save Changes' : 'Create Deal'}
           </Button>
@@ -259,8 +247,8 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
             placeholder="Select program"
             {...register('product_id')}
           >
-            {products.map((p: { id: string; name: string; list_price_usd: number }) => (
-              <option key={p.id} value={p.id}>{p.name} — {formatCurrency(p.list_price_usd)}</option>
+            {products.map((p: { id: string; name: string; one_time_price_usd: number }) => (
+              <option key={p.id} value={p.id}>{p.name} — {formatCurrency(p.one_time_price_usd)}</option>
             ))}
           </Select>
         </div>
@@ -285,84 +273,48 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
           />
         </div>
 
-        {/* Price + Discount */}
-        <div className="grid grid-cols-3 gap-4">
-          <Input
-            label="Deal Price (USD) *"
-            type="number"
-            step="0.01"
-            error={errors.deal_price_usd?.message}
-            {...register('deal_price_usd')}
-          />
-          <Input
-            label="Price (IQD, optional)"
-            type="number"
-            placeholder="e.g. 850000"
-            {...register('deal_price_iqd')}
-          />
-          <Input
-            label="Discount (USD)"
-            type="number"
-            step="0.01"
-            {...register('discount_amount')}
-          />
+        {/* Payment Way + Currency */}
+        <div className="grid grid-cols-2 gap-4">
+          <Select label="Payment Way *" disabled={!selectedProduct} {...register('payment_type')}>
+            <option value="full">
+              One-Time{selectedProduct ? ` — ${formatCurrency(selectedProduct.one_time_price_usd)}` : ''}
+            </option>
+            {hasInstallmentPlan && (
+              <option value="installment">
+                Installment — {formatCurrency(selectedProduct!.installment_monthly_price_usd)} x {selectedProduct!.installment_months}mo
+              </option>
+            )}
+          </Select>
+          <Select label="Currency *" {...register('currency')}>
+            {Object.entries(CURRENCY_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </Select>
         </div>
 
-        {/* Below-min warning */}
-        {belowMin && (
-          <div className="flex items-start gap-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 px-4 py-3">
-            <AlertCircle size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-xs font-medium text-yellow-300">
-                Price is below minimum ({formatCurrency(selectedProduct?.min_price_usd ?? 0)})
-              </p>
-              <Input
-                placeholder="Reason for below-minimum price…"
-                className="mt-2"
-                {...register('below_min_note')}
-              />
-            </div>
-          </div>
+        {watchCurrency === 'OTHER' && (
+          <Input
+            label="Currency Name *"
+            placeholder="e.g. EUR, AED…"
+            error={errors.other_currency_label?.message}
+            {...register('other_currency_label')}
+          />
         )}
 
-        {/* Payment Type */}
-        <Select label="Payment Type *" {...register('payment_type')}>
-          <option value="full">Full Payment (One Shot)</option>
-          <option value="installment">Installments</option>
-          <option value="monthly">Monthly Subscription</option>
-          <option value="custom">Custom</option>
-        </Select>
+        {/* Deal price */}
+        <div className="rounded-lg bg-brand-navy border border-brand-border px-4 py-3 flex items-center justify-between">
+          <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Deal Price</span>
+          <span className="text-lg font-bold text-brand-teal">
+            {selectedProduct ? formatCurrency(displayedPrice) : '—'}
+          </span>
+        </div>
 
         {/* Installment Schedule */}
-        {(watchPaymentType === 'installment' || watchPaymentType === 'monthly' || watchPaymentType === 'custom') && (
+        {watchPaymentType === 'installment' && fields.length > 0 && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Installment Schedule
-              </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const lastDate = fields[fields.length - 1]?.due_date ?? watchStartDate
-                  const nextDate = format(addMonths(new Date(lastDate), 1), 'yyyy-MM-dd')
-                  replace([...fields, { due_date: nextDate, amount: 0 }])
-                }}
-              >
-                <Plus size={12} />
-                Add Row
-              </Button>
-            </div>
-
-            {priceMismatch && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2">
-                <p className="text-xs text-red-400">
-                  Installment total ({formatCurrency(totalInstallments)}) must equal deal price ({formatCurrency(watchPrice)})
-                </p>
-              </div>
-            )}
-
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+              Installment Schedule — auto-filled from the program, editable per customer if needed
+            </p>
             <div className="space-y-2">
               {fields.map((field, i) => (
                 <div key={field.id} className="flex items-center gap-3">
@@ -374,25 +326,12 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
                   <Input
                     type="number"
                     step="0.01"
-                    placeholder="Amount"
+                    error={errors.installments?.[i]?.amount?.message}
                     {...register(`installments.${i}.amount`)}
                   />
-                  <button
-                    type="button"
-                    onClick={() => replace(fields.filter((_, j) => j !== i))}
-                    className="text-slate-500 hover:text-red-400 transition-colors flex-shrink-0"
-                  >
-                    <Trash2 size={14} />
-                  </button>
                 </div>
               ))}
             </div>
-
-            {fields.length > 0 && (
-              <div className={`text-xs px-3 py-2 rounded-lg ${priceMismatch ? 'text-red-400 bg-red-500/10' : 'text-brand-teal bg-teal-500/10'}`}>
-                Total: {formatCurrency(totalInstallments)} / {formatCurrency(watchPrice)}
-              </div>
-            )}
           </div>
         )}
 

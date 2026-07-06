@@ -1,24 +1,24 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Edit, Archive, RotateCcw, Trash2, AlertCircle } from 'lucide-react'
+import { Plus, Edit, Archive, RotateCcw, Trash2 } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { supabase } from '@/lib/supabase'
 import { Layout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
-import { Input, Select, Textarea } from '@/components/ui/Input'
+import { Input, Textarea } from '@/components/ui/Input'
 import { Modal, ConfirmModal } from '@/components/ui/Modal'
 import { formatCurrency } from '@/lib/utils'
-import { PLAN_LABELS, type Product, type DefaultPlan } from '@/types'
+import type { Product } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 
 const schema = z.object({
   name: z.string().min(1, 'Name is required'),
-  list_price_usd: z.coerce.number().min(0),
-  min_price_usd: z.coerce.number().min(0),
-  default_plan: z.enum(['one_shot', 'two_shots', 'three_shots', 'five_shots', 'seven_shots', 'monthly', 'custom']),
+  one_time_price_usd: z.coerce.number().min(0),
+  installment_monthly_price_usd: z.coerce.number().min(0),
+  installment_months: z.coerce.number().int().min(0, 'Cannot be negative'),
   notes: z.string().optional(),
 })
 
@@ -30,16 +30,19 @@ interface ProductFormProps {
 }
 
 function ProductForm({ product, onClose }: ProductFormProps) {
-  const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, watch, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: product?.name ?? '',
-      list_price_usd: product?.list_price_usd ?? 0,
-      min_price_usd: product?.min_price_usd ?? 0,
-      default_plan: (product?.default_plan as DefaultPlan) ?? 'one_shot',
+      one_time_price_usd: product?.one_time_price_usd ?? 0,
+      installment_monthly_price_usd: product?.installment_monthly_price_usd ?? 0,
+      installment_months: product?.installment_months ?? 1,
       notes: product?.notes ?? '',
     },
   })
+
+  const months = watch('installment_months')
+  const monthly = watch('installment_monthly_price_usd')
 
   const qc = useQueryClient()
   const mutation = useMutation({
@@ -72,15 +75,42 @@ function ProductForm({ product, onClose }: ProductFormProps) {
     >
       <form className="space-y-4">
         <Input label="Program Name *" error={errors.name?.message} {...register('name')} />
+
+        <Input
+          label="One-Time Price (USD) *"
+          type="number"
+          step="0.01"
+          error={errors.one_time_price_usd?.message}
+          {...register('one_time_price_usd')}
+        />
+
         <div className="grid grid-cols-2 gap-4">
-          <Input label="List Price (USD)" type="number" step="0.01" error={errors.list_price_usd?.message} {...register('list_price_usd')} />
-          <Input label="Minimum Price (USD)" type="number" step="0.01" {...register('min_price_usd')} />
+          <Input
+            label="Installment Price / Month (USD) *"
+            type="number"
+            step="0.01"
+            error={errors.installment_monthly_price_usd?.message}
+            {...register('installment_monthly_price_usd')}
+          />
+          <Input
+            label="Number of Months"
+            type="number"
+            step="1"
+            error={errors.installment_months?.message}
+            {...register('installment_months')}
+          />
         </div>
-        <Select label="Default Payment Plan *" error={errors.default_plan?.message} {...register('default_plan')}>
-          {Object.entries(PLAN_LABELS).map(([v, l]) => (
-            <option key={v} value={v}>{l}</option>
-          ))}
-        </Select>
+
+        {monthly > 0 && months > 0 ? (
+          <p className="text-xs text-slate-500">
+            Installment total: {formatCurrency(monthly * months)} over {months} month{months !== 1 ? 's' : ''}
+          </p>
+        ) : (
+          <p className="text-xs text-slate-500">
+            Set price/months to 0 for a one-time-only program (no installment option in New Deal).
+          </p>
+        )}
+
         <Textarea label="Notes" {...register('notes')} />
         {mutation.error && <p className="text-xs text-red-400">{String(mutation.error)}</p>}
       </form>
@@ -191,22 +221,19 @@ export default function Products() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <p className="text-xs text-slate-500">List Price</p>
+                    <p className="text-xs text-slate-500">One-Time</p>
                     <p className="text-lg font-bold text-brand-teal">
-                      {product.list_price_usd > 0 ? formatCurrency(product.list_price_usd) : 'Custom'}
+                      {formatCurrency(product.one_time_price_usd)}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Min Price</p>
+                    <p className="text-xs text-slate-500">Installment</p>
                     <p className="text-base font-medium text-slate-300">
-                      {product.min_price_usd > 0 ? formatCurrency(product.min_price_usd) : '—'}
+                      {product.installment_monthly_price_usd > 0
+                        ? `${formatCurrency(product.installment_monthly_price_usd)} x ${product.installment_months}mo`
+                        : '—'}
                     </p>
                   </div>
-                </div>
-
-                <div>
-                  <p className="text-xs text-slate-500">Default Plan</p>
-                  <p className="text-sm text-slate-300">{PLAN_LABELS[product.default_plan as DefaultPlan] ?? product.default_plan}</p>
                 </div>
 
                 {product.notes && (

@@ -50,6 +50,9 @@ create table public.products (
   min_price_usd decimal(10,2) not null default 0,
   default_plan text not null default 'one_shot'
     check (default_plan in ('one_shot','two_shots','three_shots','five_shots','seven_shots','monthly','custom')),
+  one_time_price_usd decimal(10,2) not null default 0,
+  installment_monthly_price_usd decimal(10,2) not null default 0,
+  installment_months integer not null default 1,
   is_active boolean not null default true,
   notes text,
   created_at timestamptz not null default now(),
@@ -96,7 +99,8 @@ create table public.payment_plans (
   total_amount decimal(10,2) not null,
   num_installments integer not null default 1,
   installment_amount decimal(10,2),
-  currency text not null default 'USD' check (currency in ('USD','IQD')),
+  currency text not null default 'USD' check (currency in ('USD','IQD','TRY','OTHER')),
+  other_currency_label text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

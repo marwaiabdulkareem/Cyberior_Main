@@ -14,9 +14,9 @@ import { formatDate, formatDateTime, formatCurrency, isOverdue } from '@/lib/uti
 import { DealForm } from './DealForm'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  DEAL_STATUS_LABELS, PAYMENT_METHOD_LABELS,
+  DEAL_STATUS_LABELS, PAYMENT_METHOD_LABELS, CURRENCY_LABELS,
   INSTALLMENT_STATUS_LABELS,
-  type Deal, type Installment, type Note, type InstallmentStatus,
+  type Deal, type Installment, type Note, type InstallmentStatus, type PaymentPlan,
 } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -48,7 +48,7 @@ export default function DealDetail() {
         .select('*, customer:customers(*), product:products(*), agent:sales_agents(*), installments(*), payment_plan:payment_plans(*)')
         .eq('id', id!)
         .single()
-      return data as Deal & { payment_plan: { total_amount: number; num_installments: number } | null }
+      return data as Deal & { payment_plan: PaymentPlan | null }
     },
     enabled: !!id,
   })
@@ -232,8 +232,14 @@ export default function DealDetail() {
               )}
             </div>
             <div>
-              <p className="text-xs text-slate-500">Discount</p>
-              <p className="text-sm text-slate-200">{deal.discount_amount > 0 ? formatCurrency(deal.discount_amount) : '—'}</p>
+              <p className="text-xs text-slate-500">Currency</p>
+              <p className="text-sm text-slate-200">
+                {deal.payment_plan
+                  ? (deal.payment_plan.currency === 'OTHER'
+                    ? (deal.payment_plan.other_currency_label || 'Other')
+                    : CURRENCY_LABELS[deal.payment_plan.currency])
+                  : '—'}
+              </p>
             </div>
             <div>
               <p className="text-xs text-slate-500">Payment Type</p>
@@ -243,6 +249,12 @@ export default function DealDetail() {
               <p className="text-xs text-slate-500">Start Date</p>
               <p className="text-sm text-slate-200">{formatDate(deal.start_date)}</p>
             </div>
+            {deal.discount_amount > 0 && (
+              <div>
+                <p className="text-xs text-slate-500">Discount</p>
+                <p className="text-sm text-slate-200">{formatCurrency(deal.discount_amount)}</p>
+              </div>
+            )}
           </div>
 
           {deal.below_min_override && (

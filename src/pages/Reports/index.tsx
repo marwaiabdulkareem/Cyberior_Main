@@ -1,19 +1,20 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Download, FileText, Users, AlertCircle, TrendingUp } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
+import { format } from 'date-fns'
 import { supabase } from '@/lib/supabase'
 import { Layout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Input'
-import { formatCurrency, formatDate, calcCommission, calcCollectionRate } from '@/lib/utils'
+import { formatCurrency, calcCommission, calcCollectionRate } from '@/lib/utils'
 import {
   exportDealsToExcel, exportInstallmentsToExcel,
   exportAgentReportToExcel, exportOverdueToExcel,
 } from '@/lib/export'
-import type { Deal, Installment, SalesAgent } from '@/types'
+import type { Deal, Installment, SalesAgent, Currency } from '@/types'
 
 function useReportData(agentFilter: string, productFilter: string, dateFrom: string, dateTo: string) {
   return useQuery({
@@ -26,7 +27,7 @@ function useReportData(agentFilter: string, productFilter: string, dateFrom: str
           .neq('status', 'cancelled'),
         supabase
           .from('installments')
-          .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents(*))'),
+          .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents(*), payment_plan:payment_plans(*))'),
         supabase.from('sales_agents').select('*').eq('is_active', true),
       ])
 
@@ -47,16 +48,62 @@ function useReportData(agentFilter: string, productFilter: string, dateFrom: str
   })
 }
 
+interface CommissionRow {
+  agentName: string
+  rate: number
+  currency: Currency
+  otherLabel: string | null
+  collected: number
+  commission: number
+}
+
 export default function Reports() {
   const [agentFilter, setAgentFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [commissionMonth, setCommissionMonth] = useState(() => format(new Date(), 'yyyy-MM'))
 
   const { data, isLoading } = useReportData(agentFilter, productFilter, dateFrom, dateTo)
   const deals = data?.deals ?? []
   const installments = data?.installments ?? []
   const agents = data?.agents ?? []
+
+  // Commission is paid on money actually collected, split out per currency —
+  // an agent's IQD collections and USD collections are never mixed together.
+  const commissionRows = useMemo(() => {
+    const paidThisMonth = installments.filter(
+      (i) => i.status === 'paid' && i.paid_date && i.paid_date.startsWith(commissionMonth)
+    )
+
+    const rows: CommissionRow[] = []
+    agents.forEach((agent) => {
+      const agentPaid = paidThisMonth.filter((i) => i.deal?.agent_id === agent.id)
+      if (agentPaid.length === 0) {
+        rows.push({ agentName: agent.name, rate: agent.commission_rate, currency: 'USD', otherLabel: null, collected: 0, commission: 0 })
+        return
+      }
+      const byCurrency = new Map<Currency, { collected: number; otherLabel: string | null }>()
+      agentPaid.forEach((i) => {
+        const currency = (i.deal?.payment_plan?.currency ?? 'USD') as Currency
+        const otherLabel = i.deal?.payment_plan?.other_currency_label ?? null
+        const bucket = byCurrency.get(currency) ?? { collected: 0, otherLabel }
+        bucket.collected += i.amount_paid
+        byCurrency.set(currency, bucket)
+      })
+      byCurrency.forEach((bucket, currency) => {
+        rows.push({
+          agentName: agent.name,
+          rate: agent.commission_rate,
+          currency,
+          otherLabel: bucket.otherLabel,
+          collected: bucket.collected,
+          commission: calcCommission(bucket.collected, agent.commission_rate),
+        })
+      })
+    })
+    return rows
+  }, [installments, agents, commissionMonth])
 
   const totalRevenue = deals.reduce((s, d) => s + d.deal_price_usd, 0)
   const totalCollected = installments.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount_paid, 0)
@@ -201,6 +248,52 @@ export default function Reports() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-brand-gold font-medium">{formatCurrency(row.commission)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Monthly Commission by Currency */}
+        <div className="rounded-xl bg-brand-surface border border-brand-border">
+          <div className="px-5 py-4 border-b border-brand-border flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-200">Monthly Commission by Currency</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Commission on money actually collected this month — kept separate per currency, never converted.
+              </p>
+            </div>
+            <input
+              type="month"
+              value={commissionMonth}
+              onChange={(e) => setCommissionMonth(e.target.value)}
+              className="rounded-lg bg-brand-navy border border-brand-border text-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
+            />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-brand-border bg-brand-navy">
+                  {['Agent', 'Rate', 'Currency', 'Collected', 'Commission'].map((h) => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {commissionRows.map((row, i) => (
+                  <tr key={`${row.agentName}-${row.currency}-${i}`} className="border-b border-brand-border/50 hover:bg-brand-border/20">
+                    <td className="px-4 py-3 text-slate-200 font-medium">{row.agentName}</td>
+                    <td className="px-4 py-3 text-slate-400">{row.rate}%</td>
+                    <td className="px-4 py-3 text-slate-400">
+                      {row.currency === 'OTHER' ? (row.otherLabel || 'Other') : row.currency}
+                    </td>
+                    <td className="px-4 py-3 text-green-400">
+                      {row.collected > 0 ? formatCurrency(row.collected, row.currency, row.otherLabel) : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-brand-gold font-medium">
+                      {row.collected > 0 ? formatCurrency(row.commission, row.currency, row.otherLabel) : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>

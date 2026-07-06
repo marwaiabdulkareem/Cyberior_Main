@@ -8,11 +8,9 @@ export type PaymentType = 'full' | 'installment' | 'monthly' | 'custom'
 
 export type InstallmentStatus = 'pending' | 'paid' | 'partial' | 'late' | 'cancelled' | 'paused'
 
-export type DefaultPlan = 'one_shot' | 'two_shots' | 'three_shots' | 'five_shots' | 'seven_shots' | 'monthly' | 'custom'
-
 export type PaymentMethod = 'card' | 'bank_transfer' | 'superq' | 'zaincash' | 'western_union' | 'cash' | 'other'
 
-export type Currency = 'USD' | 'IQD'
+export type Currency = 'USD' | 'IQD' | 'TRY' | 'OTHER'
 
 export type NotificationType = 'payment_due' | 'payment_overdue' | 'payment_received' | 'deal_created' | 'below_min_price' | 'installment_paused' | 'refund'
 
@@ -40,9 +38,9 @@ export interface SalesAgent {
 export interface Product {
   id: string
   name: string
-  list_price_usd: number
-  min_price_usd: number
-  default_plan: DefaultPlan
+  one_time_price_usd: number
+  installment_monthly_price_usd: number
+  installment_months: number
   is_active: boolean
   notes: string | null
   created_at: string
@@ -94,6 +92,7 @@ export interface PaymentPlan {
   num_installments: number
   installment_amount: number | null
   currency: Currency
+  other_currency_label: string | null
   created_at: string
   updated_at: string
 }
@@ -216,14 +215,11 @@ export interface DealFormData {
   product_id: string
   agent_id: string
   deal_price_usd: number
-  deal_price_iqd?: number
-  discount_amount: number
   payment_type: PaymentType
   start_date: string
   notes: string
-  num_installments?: number
-  installment_dates?: string[]
   currency: Currency
+  other_currency_label?: string
 }
 
 export interface InstallmentUpdateData {
@@ -262,24 +258,11 @@ export interface InstallmentFilters {
   overdue_only: boolean
 }
 
-export const PLAN_INSTALLMENT_COUNT: Record<DefaultPlan, number> = {
-  one_shot: 1,
-  two_shots: 2,
-  three_shots: 3,
-  five_shots: 5,
-  seven_shots: 7,
-  monthly: 1,
-  custom: 1,
-}
-
-export const PLAN_LABELS: Record<DefaultPlan, string> = {
-  one_shot: 'One Shot (Full Payment)',
-  two_shots: '2 Installments',
-  three_shots: '3 Installments',
-  five_shots: '5 Installments',
-  seven_shots: '7 Installments',
-  monthly: 'Monthly Subscription',
-  custom: 'Custom',
+export const CURRENCY_LABELS: Record<Currency, string> = {
+  USD: 'US Dollar (USD)',
+  IQD: 'Iraqi Dinar (IQD)',
+  TRY: 'Turkish Lira (TRY)',
+  OTHER: 'Other',
 }
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
