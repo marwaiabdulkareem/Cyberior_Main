@@ -25,6 +25,7 @@ const schema = z.object({
   installments: z.array(z.object({
     due_date: z.string().min(1, 'Due date required'),
     amount: z.coerce.number().positive('Amount must be positive'),
+    amount_local: z.coerce.number().optional(),
   })).optional(),
 }).superRefine((data, ctx) => {
   if (data.currency === 'OTHER' && !data.other_currency_label?.trim()) {
@@ -97,6 +98,7 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
 
   const installmentsTotal = (watchInstallments ?? []).reduce((s, i) => s + (Number(i?.amount) || 0), 0)
   const displayedPrice = watchPaymentType === 'installment' ? installmentsTotal : watchPrice
+  const installmentsTotalLocal = (watchInstallments ?? []).reduce((s, i) => s + (Number(i?.amount_local) || 0), 0)
   const hasInstallmentPlan = !!selectedProduct
     && selectedProduct.installment_months > 0
     && selectedProduct.installment_monthly_price_usd > 0
@@ -115,7 +117,7 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
 
     if (watchPaymentType === 'full') {
       setValue('deal_price_usd', selectedProduct.one_time_price_usd)
-      replace([])
+      replace([{ due_date: watchStartDate, amount: selectedProduct.one_time_price_usd, amount_local: undefined }])
       return
     }
 
@@ -123,7 +125,7 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
     const monthly = selectedProduct.installment_monthly_price_usd
     setValue('deal_price_usd', Math.round(monthly * count * 100) / 100)
     const dates = generateInstallmentDates(watchStartDate, count, 30)
-    replace(dates.map((d) => ({ due_date: d, amount: monthly })))
+    replace(dates.map((d) => ({ due_date: d, amount: monthly, amount_local: undefined })))
   }, [watchPaymentType, selectedProduct, watchStartDate])
 
   const mutation = useMutation({
@@ -175,30 +177,28 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
         .single()
       if (planError) throw planError
 
-      if (installs.length > 0 && plan) {
-        const { error: instError } = await supabase.from('installments').insert(
-          installs.map((inst, i) => ({
+      const instRows = installs.length > 0
+        ? installs.map((inst, i) => ({
             deal_id: dealId,
             payment_plan_id: plan.id,
             installment_number: i + 1,
             amount_due: inst.amount,
+            amount_due_local: inst.amount_local || null,
             due_date: inst.due_date,
             status: 'pending',
           }))
-        )
-        if (instError) throw instError
-      } else {
-        // Full payment — one installment (works for both new and edited deals)
-        const { error: instError } = await supabase.from('installments').insert({
-          deal_id: dealId,
-          payment_plan_id: plan?.id,
-          installment_number: 1,
-          amount_due: totalAmount,
-          due_date: data.start_date,
-          status: 'pending',
-        })
-        if (instError) throw instError
-      }
+        : [{
+            deal_id: dealId,
+            payment_plan_id: plan.id,
+            installment_number: 1,
+            amount_due: totalAmount,
+            amount_due_local: null,
+            due_date: data.start_date,
+            status: 'pending',
+          }]
+
+      const { error: instError } = await supabase.from('installments').insert(instRows)
+      if (instError) throw instError
 
       await supabase.from('activity_logs').insert({
         user_id: user?.id,
@@ -303,22 +303,38 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
 
         {/* Deal price */}
         <div className="rounded-lg bg-brand-navy border border-brand-border px-4 py-3 flex items-center justify-between">
-          <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Deal Price</span>
-          <span className="text-lg font-bold text-brand-teal">
-            {selectedProduct ? formatCurrency(displayedPrice) : '—'}
-          </span>
+          <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Deal Price (USD)</span>
+          <div className="text-right">
+            <span className="text-lg font-bold text-brand-teal block">
+              {selectedProduct ? formatCurrency(displayedPrice) : '—'}
+            </span>
+            {watchCurrency !== 'USD' && installmentsTotalLocal > 0 && (
+              <span className="text-xs text-slate-500">
+                ≈ {formatCurrency(installmentsTotalLocal, watchCurrency, watch('other_currency_label'))}
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Installment Schedule */}
-        {watchPaymentType === 'installment' && fields.length > 0 && (
+        {/* Payment rows */}
+        {fields.length > 0 && (
           <div className="space-y-3">
             <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Installment Schedule — auto-filled from the program, editable per customer if needed
+              {watchPaymentType === 'full'
+                ? 'Payment Details — auto-filled from the program, editable if needed'
+                : 'Installment Schedule — auto-filled from the program, editable per customer if needed'}
             </p>
+            {watchCurrency !== 'USD' && (
+              <p className="text-xs text-slate-500">
+                Enter both what the customer actually paid in {watchCurrency === 'OTHER' ? (watch('other_currency_label') || 'their currency') : watchCurrency}, and its USD equivalent — the USD figure drives revenue reporting, the local figure drives commission.
+              </p>
+            )}
             <div className="space-y-2">
               {fields.map((field, i) => (
                 <div key={field.id} className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500 w-6 text-center">#{i + 1}</span>
+                  {watchPaymentType === 'installment' && (
+                    <span className="text-xs text-slate-500 w-6 text-center">#{i + 1}</span>
+                  )}
                   <Input
                     type="date"
                     {...register(`installments.${i}.due_date`)}
@@ -326,9 +342,18 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
                   <Input
                     type="number"
                     step="0.01"
+                    placeholder="Amount (USD)"
                     error={errors.installments?.[i]?.amount?.message}
                     {...register(`installments.${i}.amount`)}
                   />
+                  {watchCurrency !== 'USD' && (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder={`Amount (${watchCurrency === 'OTHER' ? 'local' : watchCurrency})`}
+                      {...register(`installments.${i}.amount_local`)}
+                    />
+                  )}
                 </div>
               ))}
             </div>

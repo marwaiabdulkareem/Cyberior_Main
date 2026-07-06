@@ -16,7 +16,7 @@ insert into public.products (
   ('Individual Courses',        299,  99,  'two_shots',   'One-time payment only, no installment plan',           299, 0,   0),
   ('BugHuntingPro Path',        549,  499, 'five_shots',  null,                                                    549, 219, 3),
   ('Cyber Security Specialist', 149,  129, 'one_shot',    null,                                                    149, 149, 1),
-  ('OffSecPro Path',            690,  599, 'five_shots',  null,                                                    690, 299, 3),
+  ('OffSecPro Path',            690,  599, 'five_shots',  null,                                                    690, 269, 3),
   ('RedOpsPro Path',            990,  890, 'seven_shots', null,                                                    990, 400, 3),
   ('Hub Pro',                   29,   29,  'monthly',     'Monthly subscription — track each renewal as installment', 29, 29,  1),
   ('Custom Bundle / Other',     0,    0,   'custom',      'Manual price entry required',                          0,   0,   1),

@@ -87,8 +87,11 @@ export default function Reports() {
       agentPaid.forEach((i) => {
         const currency = (i.deal?.payment_plan?.currency ?? 'USD') as Currency
         const otherLabel = i.deal?.payment_plan?.other_currency_label ?? null
+        // Non-USD deals record the real amount collected in that currency
+        // separately (amount_paid_local); amount_paid stays USD-only.
+        const collectedAmount = currency === 'USD' ? i.amount_paid : (i.amount_paid_local ?? i.amount_paid)
         const bucket = byCurrency.get(currency) ?? { collected: 0, otherLabel }
-        bucket.collected += i.amount_paid
+        bucket.collected += collectedAmount
         byCurrency.set(currency, bucket)
       })
       byCurrency.forEach((bucket, currency) => {

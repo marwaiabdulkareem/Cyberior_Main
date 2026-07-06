@@ -34,7 +34,7 @@ export default function DealDetail() {
   const [payModal, setPayModal] = useState<PayInstallmentModal>({ installment: null })
   const [noteText, setNoteText] = useState('')
   const [payData, setPayData] = useState({
-    amount_paid: 0, paid_date: '', payment_method: 'bank_transfer' as string,
+    amount_paid: 0, amount_paid_local: 0, paid_date: '', payment_method: 'bank_transfer' as string,
     proof_url: '', notes: '', status: 'paid' as InstallmentStatus,
   })
   const [refundModal, setRefundModal] = useState(false)
@@ -95,6 +95,7 @@ export default function DealDetail() {
       const inst = payModal.installment!
       const { error } = await supabase.from('installments').update({
         amount_paid: payData.amount_paid,
+        amount_paid_local: payData.amount_paid_local || null,
         paid_date: payData.paid_date,
         payment_method: payData.payment_method,
         proof_url: payData.proof_url || null,
@@ -157,6 +158,11 @@ export default function DealDetail() {
   const completionPct = deal.deal_price_usd > 0 ? Math.min(100, Math.round((totalPaid / deal.deal_price_usd) * 100)) : 0
   const canEdit = isAdmin || (isAgent && deal.agent?.profile_id === user?.id)
   const canPay = isAdmin || isFinance || (isAgent && deal.agent?.profile_id === user?.id)
+
+  const currency = deal.payment_plan?.currency ?? 'USD'
+  const otherLabel = deal.payment_plan?.other_currency_label ?? null
+  const totalDueLocal = installments.reduce((s, i) => s + (i.amount_due_local || 0), 0)
+  const totalPaidLocal = installments.reduce((s, i) => s + (i.amount_paid_local || 0), 0)
 
   return (
     <Layout title="Deal Detail">
@@ -227,6 +233,9 @@ export default function DealDetail() {
             <div>
               <p className="text-xs text-slate-500">Deal Price</p>
               <p className="text-lg font-bold text-brand-teal">{formatCurrency(deal.deal_price_usd)}</p>
+              {currency !== 'USD' && totalDueLocal > 0 && (
+                <p className="text-xs text-slate-500">≈ {formatCurrency(totalDueLocal, currency, otherLabel)}</p>
+              )}
               {deal.deal_price_iqd && (
                 <p className="text-xs text-slate-500">{formatCurrency(deal.deal_price_iqd, 'IQD')}</p>
               )}
@@ -274,6 +283,9 @@ export default function DealDetail() {
             <div className="text-center">
               <p className="text-xs text-slate-500">Paid</p>
               <p className="text-xl font-bold text-green-400">{formatCurrency(totalPaid)}</p>
+              {currency !== 'USD' && totalPaidLocal > 0 && (
+                <p className="text-xs text-slate-500">≈ {formatCurrency(totalPaidLocal, currency, otherLabel)}</p>
+              )}
             </div>
             <div className="text-center">
               <p className="text-xs text-slate-500">Remaining</p>
@@ -311,9 +323,17 @@ export default function DealDetail() {
                       <span className="text-xs text-slate-500">#{inst.installment_number}</span>
                       <StatusBadge status={late ? 'late' : inst.status} />
                     </div>
-                    <p className="text-sm font-medium text-slate-200 mt-1">{formatCurrency(inst.amount_due)}</p>
+                    <p className="text-sm font-medium text-slate-200 mt-1">
+                      {formatCurrency(inst.amount_due)}
+                      {currency !== 'USD' && inst.amount_due_local ? (
+                        <span className="text-xs text-slate-500"> (≈ {formatCurrency(inst.amount_due_local, currency, otherLabel)})</span>
+                      ) : null}
+                    </p>
                     {inst.amount_paid > 0 && inst.amount_paid < inst.amount_due && (
-                      <p className="text-xs text-slate-500">Paid: {formatCurrency(inst.amount_paid)}</p>
+                      <p className="text-xs text-slate-500">
+                        Paid: {formatCurrency(inst.amount_paid)}
+                        {currency !== 'USD' && inst.amount_paid_local ? ` (≈ ${formatCurrency(inst.amount_paid_local, currency, otherLabel)})` : ''}
+                      </p>
                     )}
                     <p className="text-xs text-slate-500 mt-0.5">Due: {formatDate(inst.due_date)}</p>
                     {inst.paid_date && (
@@ -330,6 +350,7 @@ export default function DealDetail() {
                             setPayModal({ installment: inst })
                             setPayData({
                               amount_paid: inst.amount_due - inst.amount_paid,
+                              amount_paid_local: (inst.amount_due_local ?? 0) - (inst.amount_paid_local ?? 0),
                               paid_date: new Date().toISOString().slice(0, 10),
                               payment_method: 'bank_transfer',
                               proof_url: '', notes: '', status: 'paid',
@@ -422,6 +443,15 @@ export default function DealDetail() {
             value={payData.amount_paid}
             onChange={(e) => setPayData((p) => ({ ...p, amount_paid: Number(e.target.value) }))}
           />
+          {currency !== 'USD' && (
+            <Input
+              label={`Amount Paid (${currency === 'OTHER' ? (otherLabel || 'local currency') : currency})`}
+              type="number"
+              step="0.01"
+              value={payData.amount_paid_local}
+              onChange={(e) => setPayData((p) => ({ ...p, amount_paid_local: Number(e.target.value) }))}
+            />
+          )}
           <Input
             label="Payment Date *"
             type="date"

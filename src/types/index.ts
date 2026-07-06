@@ -104,6 +104,8 @@ export interface Installment {
   installment_number: number
   amount_due: number
   amount_paid: number
+  amount_due_local: number | null
+  amount_paid_local: number | null
   due_date: string
   paid_date: string | null
   status: InstallmentStatus
@@ -224,6 +226,7 @@ export interface DealFormData {
 
 export interface InstallmentUpdateData {
   amount_paid: number
+  amount_paid_local?: number | null
   paid_date: string
   payment_method: PaymentMethod
   proof_url?: string
