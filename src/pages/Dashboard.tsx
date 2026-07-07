@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -11,7 +12,7 @@ import { supabase } from '@/lib/supabase'
 import { Layout } from '@/components/layout/Layout'
 import { KPICard } from '@/components/ui/Card'
 import { StatusBadge } from '@/components/ui/Badge'
-import { formatCurrency, formatDate, calcCollectionRate } from '@/lib/utils'
+import { formatCurrency, formatDate, calcCollectionRate, cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import type { Deal, Installment } from '@/types'
 
@@ -115,6 +116,7 @@ function useDashboardData() {
         },
         revenueByMonth, revenueByAgent, revenueByProgram, paymentSplit,
         upcoming, overdueList,
+        rawDeals: deals,
       }
     },
     refetchInterval: 5 * 60 * 1000,
@@ -124,34 +126,145 @@ function useDashboardData() {
 export default function Dashboard() {
   const { data, isLoading } = useDashboardData()
 
+  const [period, setPeriod] = useState<'this_month' | 'last_3m' | 'last_6m' | 'all_time' | 'custom'>('all_time')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+
+  const thisMonthKey = new Date().toISOString().slice(0, 7)
+  const thisMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+
+  const filteredDeals = useMemo(() => {
+    const all = data?.rawDeals ?? []
+    if (period === 'this_month') return all.filter(d => d.created_at?.startsWith(thisMonthKey))
+    if (period === 'last_3m') {
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 3)
+      const s = cutoff.toISOString().slice(0, 10)
+      return all.filter(d => (d.created_at?.slice(0, 10) ?? '') >= s)
+    }
+    if (period === 'last_6m') {
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 6)
+      const s = cutoff.toISOString().slice(0, 10)
+      return all.filter(d => (d.created_at?.slice(0, 10) ?? '') >= s)
+    }
+    if (period === 'custom') {
+      return all.filter(d => {
+        const date = d.created_at?.slice(0, 10) ?? ''
+        return (!customFrom || date >= customFrom) && (!customTo || date <= customTo)
+      })
+    }
+    return all
+  }, [data?.rawDeals, period, customFrom, customTo, thisMonthKey])
+
+  const filteredKpis = useMemo(() => {
+    const revenue = filteredDeals.reduce((s, d) => s + d.deal_price_usd, 0)
+    const collected = filteredDeals.reduce((s, d) => s + (d.installments?.reduce((a, i) => a + i.amount_paid, 0) ?? 0), 0)
+    const pending = revenue - collected
+    const overdue = filteredDeals.flatMap(d => d.installments ?? []).filter(i => i.status === 'late').reduce((s, i) => s + Math.max(0, i.amount_due - i.amount_paid), 0)
+    const overdueCount = filteredDeals.flatMap(d => d.installments ?? []).filter(i => i.status === 'late').length
+    return { revenue, collected, pending, overdue, overdueCount, collectionRate: calcCollectionRate(collected, revenue) }
+  }, [filteredDeals])
+
+  const thisMonthKpis = useMemo(() => {
+    const deals = (data?.rawDeals ?? []).filter(d => d.created_at?.startsWith(thisMonthKey))
+    const revenue = deals.reduce((s, d) => s + d.deal_price_usd, 0)
+    const collected = deals.reduce((s, d) => s + (d.installments?.reduce((a, i) => a + i.amount_paid, 0) ?? 0), 0)
+    return { revenue, collected, pending: revenue - collected, deals: deals.length }
+  }, [data?.rawDeals, thisMonthKey])
+
+  const PERIOD_OPTIONS = [
+    { key: 'this_month' as const, label: 'This Month' },
+    { key: 'last_3m' as const, label: 'Last 3M' },
+    { key: 'last_6m' as const, label: 'Last 6M' },
+    { key: 'all_time' as const, label: 'All Time' },
+    { key: 'custom' as const, label: 'Custom' },
+  ]
+
+  const inputDateClass = "rounded-lg bg-brand-surface border border-brand-border text-slate-400 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-teal"
+
   return (
     <Layout title="Dashboard">
       <div className="space-y-6">
-        {/* KPI Grid */}
+
+        {/* This Month Highlight */}
+        <div className="rounded-xl bg-brand-teal/10 border border-brand-teal/30 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-brand-teal flex items-center gap-2">
+              <Calendar size={14} />
+              {thisMonthLabel}
+            </h3>
+            <span className="text-xs text-slate-500">This Month</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <p className="text-xs text-slate-500">Revenue</p>
+              <p className="text-xl font-bold text-slate-100">{formatCurrency(thisMonthKpis.revenue)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Collected</p>
+              <p className="text-xl font-bold text-green-400">{formatCurrency(thisMonthKpis.collected)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Pending</p>
+              <p className="text-xl font-bold text-yellow-400">{formatCurrency(thisMonthKpis.pending)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">New Deals</p>
+              <p className="text-xl font-bold text-brand-teal">{thisMonthKpis.deals}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Period Selector */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-slate-500 mr-1">Period:</span>
+          {PERIOD_OPTIONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setPeriod(key)}
+              className={cn(
+                'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                period === key
+                  ? 'bg-brand-teal text-white'
+                  : 'text-slate-400 hover:text-slate-200 bg-brand-surface border border-brand-border',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+          {period === 'custom' && (
+            <div className="flex items-center gap-2 ml-2">
+              <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className={inputDateClass} />
+              <span className="text-xs text-slate-500">→</span>
+              <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className={inputDateClass} />
+            </div>
+          )}
+        </div>
+
+        {/* KPI Grid — responds to period selector */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <KPICard
-            title="Total Revenue"
-            value={formatCurrency(data?.kpis.totalRevenue ?? 0)}
+            title={period === 'all_time' ? 'Total Revenue' : 'Revenue'}
+            value={formatCurrency(filteredKpis.revenue)}
             icon={<DollarSign size={16} />}
             color="teal"
           />
           <KPICard
             title="Collected"
-            value={formatCurrency(data?.kpis.totalCollected ?? 0)}
-            subtitle={`${data?.kpis.collectionRate ?? 0}% collection rate`}
+            value={formatCurrency(filteredKpis.collected)}
+            subtitle={`${filteredKpis.collectionRate}% collection rate`}
             icon={<CheckCircle size={16} />}
             color="green"
           />
           <KPICard
             title="Pending"
-            value={formatCurrency(data?.kpis.totalPending ?? 0)}
+            value={formatCurrency(filteredKpis.pending)}
             icon={<Clock size={16} />}
             color="gold"
           />
           <KPICard
             title="Overdue"
-            value={formatCurrency(data?.kpis.totalOverdue ?? 0)}
-            subtitle={`${data?.kpis.overdueCount ?? 0} overdue installments`}
+            value={formatCurrency(filteredKpis.overdue)}
+            subtitle={`${filteredKpis.overdueCount} overdue installments`}
             icon={<AlertCircle size={16} />}
             color="red"
           />

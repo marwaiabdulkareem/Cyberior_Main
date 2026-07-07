@@ -3,6 +3,7 @@ import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { Plus, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, Textarea } from '@/components/ui/Input'
@@ -10,7 +11,7 @@ import { Button } from '@/components/ui/Button'
 import { formatCurrency, generateInstallmentDates } from '@/lib/utils'
 import { CURRENCY_LABELS, type Deal } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
-import { format } from 'date-fns'
+import { format, addMonths } from 'date-fns'
 
 const schema = z.object({
   customer_id: z.string().min(1, 'Customer is required'),
@@ -331,11 +332,54 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
         {/* Payment rows */}
         {fields.length > 0 && (
           <div className="space-y-3">
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              {watchPaymentType === 'full'
-                ? 'Payment Details — auto-filled from the program, editable if needed'
-                : 'Installment Schedule — auto-filled from the program, editable per customer if needed'}
-            </p>
+            {watchPaymentType === 'installment' ? (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                  Installment Schedule
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500"># rows:</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="24"
+                    value={fields.length}
+                    onChange={(e) => {
+                      const n = Math.max(1, Math.min(24, parseInt(e.target.value) || 1))
+                      const price = watchPrice || 0
+                      const amountEach = n > 0 ? Math.round((price / n) * 100) / 100 : price
+                      const start = watchStartDate || format(new Date(), 'yyyy-MM-dd')
+                      const dates = generateInstallmentDates(start, n, 30)
+                      replace(dates.map((d, i) => ({
+                        due_date: d,
+                        amount: i === n - 1
+                          ? Math.round((price - amountEach * (n - 1)) * 100) / 100
+                          : amountEach,
+                        amount_local: undefined,
+                      })))
+                    }}
+                    className="w-14 rounded bg-brand-navy border border-brand-border text-slate-200 text-xs px-2 py-1 text-center focus:outline-none focus:ring-1 focus:ring-brand-teal"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      const lastDate = fields[fields.length - 1]?.due_date ?? watchStartDate
+                      const nextDate = format(addMonths(new Date(lastDate + 'T00:00:00'), 1), 'yyyy-MM-dd')
+                      replace([...fields, { due_date: nextDate, amount: 0, amount_local: undefined }])
+                    }}
+                  >
+                    <Plus size={12} />
+                    Add Row
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Payment Details — auto-filled from the program, editable if needed
+              </p>
+            )}
             {watchCurrency !== 'USD' && (
               <p className="text-xs text-slate-500">
                 Enter both what the customer actually paid in {watchCurrency === 'OTHER' ? (watch('other_currency_label') || 'their currency') : watchCurrency}, and its USD equivalent — the USD figure drives revenue reporting, the local figure drives commission.
@@ -365,6 +409,15 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
                       placeholder={`Amount (${watchCurrency === 'OTHER' ? 'local' : watchCurrency})`}
                       {...register(`installments.${i}.amount_local`)}
                     />
+                  )}
+                  {watchPaymentType === 'installment' && (
+                    <button
+                      type="button"
+                      onClick={() => replace(fields.filter((_, j) => j !== i))}
+                      className="text-slate-500 hover:text-red-400 transition-colors flex-shrink-0"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   )}
                 </div>
               ))}
