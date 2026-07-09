@@ -14,7 +14,7 @@ interface FileUploadProps {
 }
 
 export function FileUpload({
-  onUpload, accept = 'image/*,.pdf', bucket = 'payment-proofs',
+  onUpload, accept = 'image/*,.pdf', bucket = 'payments-proofs',
   path = 'proofs', existingUrl, label = 'Upload Proof',
 }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null)
