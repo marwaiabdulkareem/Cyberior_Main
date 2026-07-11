@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { PeriodSelector } from '@/components/ui/PeriodSelector'
 import { formatCurrency, formatDate, getPeriodRange, type PeriodPreset } from '@/lib/utils'
 import { exportInstallmentsToExcel } from '@/lib/export'
+import { useTableSort } from '@/lib/useTableSort'
 import { PAYMENT_METHOD_LABELS, type Installment } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -70,6 +71,7 @@ export default function Payments() {
   })
 
   const totalCollected = filtered.reduce((s, p) => s + p.amount_paid, 0)
+  const { sorted, sortKey, sortDir, onSort } = useTableSort(filtered)
 
   const columns: Column<Installment>[] = [
     {
@@ -186,10 +188,13 @@ export default function Payments() {
 
         <Table<Installment>
           columns={columns}
-          data={filtered}
+          data={sorted}
           loading={isLoading}
           onRowClick={(p) => navigate(`/deals/${p.deal_id}`)}
           emptyMessage="No completed payments found."
+          onSort={onSort}
+          sortKey={sortKey}
+          sortDir={sortDir}
         />
       </div>
     </Layout>

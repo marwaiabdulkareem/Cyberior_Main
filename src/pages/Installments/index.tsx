@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { PeriodSelector } from '@/components/ui/PeriodSelector'
 import { formatCurrency, formatDate, isOverdue, isDueSoon, getPeriodRange, type PeriodPreset } from '@/lib/utils'
 import { exportInstallmentsToExcel } from '@/lib/export'
+import { useTableSort } from '@/lib/useTableSort'
 import { INSTALLMENT_STATUS_LABELS, type Installment, type InstallmentStatus } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
@@ -83,6 +84,8 @@ export default function Installments() {
 
     return matchAgent && matchFrom && matchTo && matchTab
   })
+
+  const { sorted, sortKey, sortDir, onSort } = useTableSort(filtered)
 
   const overdueCount = installments.filter((i) => i.status === 'late').length
   const overdueAmount = installments.filter((i) => i.status === 'late').reduce((s, i) => s + (i.amount_due - i.amount_paid), 0)
@@ -242,10 +245,13 @@ export default function Installments() {
 
         <Table<Installment>
           columns={columns}
-          data={filtered}
+          data={sorted}
           loading={isLoading}
           onRowClick={(i) => navigate(`/deals/${i.deal_id}`)}
           emptyMessage="No installments found for the selected filter."
+          onSort={onSort}
+          sortKey={sortKey}
+          sortDir={sortDir}
         />
       </div>
     </Layout>

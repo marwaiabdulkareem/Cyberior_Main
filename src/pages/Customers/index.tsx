@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { PeriodSelector } from '@/components/ui/PeriodSelector'
 import { formatDate, getPeriodRange, type PeriodPreset } from '@/lib/utils'
 import { exportCustomersToExcel } from '@/lib/export'
+import { useTableSort } from '@/lib/useTableSort'
 import { CUSTOMER_STATUS_LABELS, type Customer, type CustomerStatus } from '@/types'
 import { CustomerForm } from './CustomerForm'
 import { useAuth } from '@/contexts/AuthContext'
@@ -69,6 +70,8 @@ export default function Customers() {
     const matchPeriod = (!from || date >= from) && (!to || date <= to)
     return matchSearch && matchStatus && matchPeriod
   })
+
+  const { sorted, sortKey, sortDir, onSort } = useTableSort(filtered)
 
   const columns: Column<Customer>[] = [
     {
@@ -178,10 +181,13 @@ export default function Customers() {
         {/* Table */}
         <Table<Customer>
           columns={columns}
-          data={filtered}
+          data={sorted}
           loading={isLoading}
           onRowClick={(c) => navigate(`/customers/${c.id}`)}
           emptyMessage="No customers found. Add your first customer."
+          onSort={onSort}
+          sortKey={sortKey}
+          sortDir={sortDir}
         />
       </div>
 

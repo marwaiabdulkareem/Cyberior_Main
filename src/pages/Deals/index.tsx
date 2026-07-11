@@ -10,6 +10,7 @@ import { Table, type Column } from '@/components/ui/Table'
 import { StatusBadge } from '@/components/ui/Badge'
 import { PeriodSelector } from '@/components/ui/PeriodSelector'
 import { formatCurrency, formatDate, getPeriodRange, type PeriodPreset } from '@/lib/utils'
+import { useTableSort } from '@/lib/useTableSort'
 import { exportDealsToExcel } from '@/lib/export'
 import { DEAL_STATUS_LABELS, type Deal, type DealStatus, type PaymentType } from '@/types'
 import { DealForm } from './DealForm'
@@ -83,6 +84,8 @@ export default function Deals() {
       matchPeriod
     )
   })
+
+  const { sorted, sortKey, sortDir, onSort } = useTableSort(filtered)
 
   const totalRevenue = filtered.reduce((s, d) => s + d.deal_price_usd, 0)
   const totalCollected = filtered.reduce((s, d) => s + (d.installments?.reduce((a, i) => a + i.amount_paid, 0) ?? 0), 0)
@@ -227,10 +230,13 @@ export default function Deals() {
 
         <Table<Deal>
           columns={columns}
-          data={filtered}
+          data={sorted}
           loading={isLoading}
           onRowClick={(d) => navigate(`/deals/${d.id}`)}
           emptyMessage="No deals found. Create your first deal."
+          onSort={onSort}
+          sortKey={sortKey}
+          sortDir={sortDir}
         />
       </div>
 
