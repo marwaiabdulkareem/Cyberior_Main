@@ -14,7 +14,7 @@ import { KPICard } from '@/components/ui/Card'
 import { StatusBadge } from '@/components/ui/Badge'
 import { PeriodSelector } from '@/components/ui/PeriodSelector'
 import {
-  formatCurrency, formatDate, calcCollectionRate,
+  formatCurrency, formatDate, calcCollectionRate, isOverdue,
   getPeriodRange, PERIOD_PRESET_LABELS, type PeriodPreset,
 } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -49,14 +49,17 @@ function useDashboardData() {
       const totalCollected = installments
         .filter((i) => i.status === 'paid' || i.status === 'partial')
         .reduce((s, i) => s + i.amount_paid, 0)
+      // "late" is never actually written to the database — it's a computed
+      // state (isOverdue), so it must be checked live off due_date/status,
+      // not compared against a literal 'late' string that's never stored.
       const totalOverdue = installments
-        .filter((i) => i.status === 'late')
+        .filter((i) => isOverdue(i.due_date, i.status))
         .reduce((s, i) => s + (i.amount_due - i.amount_paid), 0)
       const totalPending = totalRevenue - totalCollected
 
       const fullyPaid = deals.filter((d) => d.status === 'completed').length
       const installmentDeals = deals.filter((d) => d.payment_type === 'installment').length
-      const overdueCount = installments.filter((i) => i.status === 'late').length
+      const overdueCount = installments.filter((i) => isOverdue(i.due_date, i.status)).length
       const activeStudents = deals.filter((d) => d.status === 'active').length
 
       // Revenue by month (last 6 months)
@@ -106,7 +109,7 @@ function useDashboardData() {
       const revenueByProgram = Object.values(programMap)
 
       // Overdue list
-      const overdueList = installments.filter((i) => i.status === 'late').slice(0, 10)
+      const overdueList = installments.filter((i) => isOverdue(i.due_date, i.status)).slice(0, 10)
 
       // Payment type split
       const paymentSplit = [

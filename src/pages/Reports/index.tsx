@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Input'
 import { PeriodSelector } from '@/components/ui/PeriodSelector'
 import {
-  formatCurrency, calcCommission, calcCollectionRate, calcAgentShare,
+  formatCurrency, calcCommission, calcCollectionRate, calcAgentShare, isOverdue,
   getPeriodRange, type PeriodPreset,
 } from '@/lib/utils'
 import {
@@ -132,7 +132,7 @@ export default function Reports() {
 
   const totalRevenue = deals.reduce((s, d) => s + d.deal_price_usd, 0)
   const totalCollected = installments.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount_paid, 0)
-  const totalOverdue = installments.filter((i) => i.status === 'late').reduce((s, i) => s + (i.amount_due - i.amount_paid), 0)
+  const totalOverdue = installments.filter((i) => isOverdue(i.due_date, i.status)).reduce((s, i) => s + (i.amount_due - i.amount_paid), 0)
   const collectionRate = calcCollectionRate(totalCollected, totalRevenue)
 
   const agentNames = Array.from(new Set(
@@ -150,8 +150,8 @@ export default function Reports() {
       return s + dealCollected * calcAgentShare(d, agent.id)
     }, 0)
     const overdue = agentDeals.reduce((s, d) => {
-      const dealOverdue = d.installments?.filter((i: { status: string }) => i.status === 'late')
-        .reduce((a: number, i: { amount_due: number; amount_paid: number }) => a + (i.amount_due - i.amount_paid), 0) ?? 0
+      const dealOverdue = d.installments?.filter((i) => isOverdue(i.due_date, i.status))
+        .reduce((a, i) => a + (i.amount_due - i.amount_paid), 0) ?? 0
       return s + dealOverdue * calcAgentShare(d, agent.id)
     }, 0)
     return {

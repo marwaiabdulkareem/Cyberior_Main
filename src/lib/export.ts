@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { formatDate, formatCurrency, calcCommission, calcAgentShare } from './utils'
+import { formatDate, formatCurrency, calcCommission, calcAgentShare, isOverdue } from './utils'
 import type { Deal, Installment, Customer, SalesAgent } from '@/types'
 
 function downloadWorkbook(wb: XLSX.WorkBook, fileName: string) {
@@ -90,7 +90,7 @@ export function exportAgentReportToExcel(agents: SalesAgent[], deals: Deal[]) {
 }
 
 export function exportOverdueToExcel(installments: Installment[]) {
-  const overdue = installments.filter((i) => i.status === 'late')
+  const overdue = installments.filter((i) => isOverdue(i.due_date, i.status))
   const rows = overdue.map((i) => ({
     'Customer': i.deal?.customer?.full_name ?? '',
     'Phone': i.deal?.customer?.phone ?? '',

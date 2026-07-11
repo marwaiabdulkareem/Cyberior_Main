@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { Card } from '@/components/ui/Card'
-import { formatCurrency, calcCommission, calcAgentShare } from '@/lib/utils'
+import { formatCurrency, calcCommission, calcAgentShare, isOverdue } from '@/lib/utils'
 import type { SalesAgent, Deal } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
@@ -128,7 +128,7 @@ export default function Agents() {
       return s + dealCollected * calcAgentShare(d, agentId)
     }, 0)
     const overdue = agentDeals.reduce((s, d) => {
-      const dealOverdue = d.installments?.filter((i: { status: string }) => i.status === 'late').reduce((a: number, i: { amount_due: number; amount_paid: number }) => a + (i.amount_due - i.amount_paid), 0) ?? 0
+      const dealOverdue = d.installments?.filter((i) => isOverdue(i.due_date, i.status)).reduce((a, i) => a + (i.amount_due - i.amount_paid), 0) ?? 0
       return s + dealOverdue * calcAgentShare(d, agentId)
     }, 0)
     const agent = agents.find((a) => a.id === agentId)
