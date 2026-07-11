@@ -4,16 +4,20 @@ import { Download, FileText, Users, AlertCircle, TrendingUp } from 'lucide-react
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { format } from 'date-fns'
 import { supabase } from '@/lib/supabase'
 import { Layout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Input'
-import { formatCurrency, calcCommission, calcCollectionRate, calcAgentShare } from '@/lib/utils'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import {
+  formatCurrency, calcCommission, calcCollectionRate, calcAgentShare,
+  getPeriodRange, type PeriodPreset,
+} from '@/lib/utils'
 import {
   exportDealsToExcel, exportInstallmentsToExcel,
   exportAgentReportToExcel, exportOverdueToExcel,
 } from '@/lib/export'
+import { useAuth } from '@/contexts/AuthContext'
 import type { Deal, Installment, SalesAgent, Currency } from '@/types'
 
 function useReportData(agentFilter: string, productFilter: string, dateFrom: string, dateTo: string) {
@@ -64,12 +68,15 @@ function collectedAmountOf(i: Installment): number {
 }
 
 export default function Reports() {
+  const { isAdmin } = useAuth()
   const [agentFilter, setAgentFilter] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [periodFrom, setPeriodFrom] = useState(() => format(new Date(), 'yyyy-MM-01'))
-  const [periodTo, setPeriodTo] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [commissionPeriod, setCommissionPeriod] = useState<PeriodPreset>('this_month')
+  const [commissionCustomFrom, setCommissionCustomFrom] = useState('')
+  const [commissionCustomTo, setCommissionCustomTo] = useState('')
+  const { from: periodFrom, to: periodTo } = getPeriodRange(commissionPeriod, commissionCustomFrom, commissionCustomTo)
 
   const { data, isLoading } = useReportData(agentFilter, productFilter, dateFrom, dateTo)
   const deals = data?.deals ?? []
@@ -277,30 +284,25 @@ export default function Reports() {
           </div>
         </div>
 
-        {/* Commission & Collections by Period */}
+        {/* Commission & Collections by Period — admin only, auto-defaults to this month */}
+        {isAdmin && (
         <div className="rounded-xl bg-brand-surface border border-brand-border">
           <div className="px-5 py-4 border-b border-brand-border flex items-center justify-between flex-wrap gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-200">Commission & Collections by Period</h3>
+              <h3 className="text-sm font-semibold text-slate-200">Monthly Commission by Agent</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Money actually collected in this date range, and commission on it — kept separate per currency, never converted.
+                Money actually collected in this period, and each agent's commission on it — kept separate per currency, never converted. Defaults to this month.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={periodFrom}
-                onChange={(e) => setPeriodFrom(e.target.value)}
-                className="rounded-lg bg-brand-navy border border-brand-border text-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
-              />
-              <span className="text-xs text-slate-500">to</span>
-              <input
-                type="date"
-                value={periodTo}
-                onChange={(e) => setPeriodTo(e.target.value)}
-                className="rounded-lg bg-brand-navy border border-brand-border text-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
-              />
-            </div>
+            <PeriodSelector
+              value={commissionPeriod}
+              onChange={setCommissionPeriod}
+              customFrom={commissionCustomFrom}
+              customTo={commissionCustomTo}
+              onCustomFromChange={setCommissionCustomFrom}
+              onCustomToChange={setCommissionCustomTo}
+              label=""
+            />
           </div>
           <div className="px-5 py-3 border-b border-brand-border flex flex-wrap gap-x-6 gap-y-1">
             <span className="text-xs text-slate-500">Total Collected:</span>
@@ -343,6 +345,7 @@ export default function Reports() {
             </table>
           </div>
         </div>
+        )}
 
         {/* Export Buttons */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

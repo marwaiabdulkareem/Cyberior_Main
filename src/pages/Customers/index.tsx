@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/Button'
 import { Input, Select } from '@/components/ui/Input'
 import { Table, type Column } from '@/components/ui/Table'
 import { StatusBadge } from '@/components/ui/Badge'
-import { formatDate } from '@/lib/utils'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import { formatDate, getPeriodRange, type PeriodPreset } from '@/lib/utils'
 import { exportCustomersToExcel } from '@/lib/export'
 import { CUSTOMER_STATUS_LABELS, type Customer, type CustomerStatus } from '@/types'
 import { CustomerForm } from './CustomerForm'
@@ -50,6 +51,10 @@ export default function Customers() {
   const [showForm, setShowForm] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<CustomerStatus | ''>('')
+  const [period, setPeriod] = useState<PeriodPreset>('all_time')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const { from, to } = getPeriodRange(period, customFrom, customTo)
 
   const filtered = customers.filter((c) => {
     const q = search.toLowerCase()
@@ -60,7 +65,9 @@ export default function Customers() {
       (c.email ?? '').toLowerCase().includes(q) ||
       (c.country ?? '').toLowerCase().includes(q)
     const matchStatus = !statusFilter || c.status === statusFilter
-    return matchSearch && matchStatus
+    const date = c.created_at?.slice(0, 10) ?? ''
+    const matchPeriod = (!from || date >= from) && (!to || date <= to)
+    return matchSearch && matchStatus && matchPeriod
   })
 
   const columns: Column<Customer>[] = [
@@ -144,6 +151,16 @@ export default function Customers() {
             </Button>
           </div>
         </div>
+
+        <PeriodSelector
+          value={period}
+          onChange={setPeriod}
+          customFrom={customFrom}
+          customTo={customTo}
+          onCustomFromChange={setCustomFrom}
+          onCustomToChange={setCustomTo}
+          label="Added:"
+        />
 
         {/* Stats bar */}
         <div className="flex gap-4 text-xs text-slate-500">

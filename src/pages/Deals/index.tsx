@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Input'
 import { Table, type Column } from '@/components/ui/Table'
 import { StatusBadge } from '@/components/ui/Badge'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import { formatCurrency, formatDate, getPeriodRange, type PeriodPreset } from '@/lib/utils'
 import { exportDealsToExcel } from '@/lib/export'
 import { DEAL_STATUS_LABELS, type Deal, type DealStatus, type PaymentType } from '@/types'
 import { DealForm } from './DealForm'
@@ -55,6 +56,10 @@ export default function Deals() {
   const [statusFilter, setStatusFilter] = useState<DealStatus | ''>('')
   const [paymentFilter, setPaymentFilter] = useState<PaymentType | ''>('')
   const [agentFilter, setAgentFilter] = useState('')
+  const [period, setPeriod] = useState<PeriodPreset>('all_time')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const { from, to } = getPeriodRange(period, customFrom, customTo)
 
   const agents = Array.from(new Map(
     deals.flatMap((d) => [[d.agent?.name, d.agent], [d.co_agent?.name, d.co_agent]] as const)
@@ -68,11 +73,14 @@ export default function Deals() {
       d.product?.name.toLowerCase().includes(q) ||
       d.agent?.name.toLowerCase().includes(q) ||
       d.co_agent?.name.toLowerCase().includes(q)
+    const date = d.start_date ?? ''
+    const matchPeriod = (!from || date >= from) && (!to || date <= to)
     return (
       matchSearch &&
       (!statusFilter || d.status === statusFilter) &&
       (!paymentFilter || d.payment_type === paymentFilter) &&
-      (!agentFilter || d.agent?.name === agentFilter || d.co_agent?.name === agentFilter)
+      (!agentFilter || d.agent?.name === agentFilter || d.co_agent?.name === agentFilter) &&
+      matchPeriod
     )
   })
 
@@ -195,6 +203,16 @@ export default function Deals() {
             </Button>
           </div>
         </div>
+
+        <PeriodSelector
+          value={period}
+          onChange={setPeriod}
+          customFrom={customFrom}
+          customTo={customTo}
+          onCustomFromChange={setCustomFrom}
+          onCustomToChange={setCustomTo}
+          label="Start Date:"
+        />
 
         {/* Stats */}
         <div className="flex gap-4 text-xs text-slate-500 flex-wrap">

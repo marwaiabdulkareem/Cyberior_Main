@@ -76,17 +76,14 @@ export function calcCommission(dealPrice: number, commissionRate: number): numbe
   return (dealPrice * commissionRate) / 100
 }
 
-export type PeriodPreset =
-  | 'this_month' | 'last_month' | 'next_month'
-  | 'last_3m' | 'last_6m' | 'this_year' | 'all_time' | 'custom'
+export type PeriodPreset = 'this_month' | 'last_month' | 'last_3m' | 'all_time' | 'custom'
+
+export const PERIOD_PRESETS: PeriodPreset[] = ['this_month', 'last_month', 'last_3m', 'all_time', 'custom']
 
 export const PERIOD_PRESET_LABELS: Record<PeriodPreset, string> = {
   this_month: 'This Month',
   last_month: 'Last Month',
-  next_month: 'Next Month',
   last_3m: 'Last 3M',
-  last_6m: 'Last 6M',
-  this_year: 'This Year',
   all_time: 'All Time',
   custom: 'Custom',
 }
@@ -108,20 +105,10 @@ export function getPeriodRange(
       const d = new Date(today.getFullYear(), today.getMonth() - 1, 1)
       return { from: iso(startOfMonth(d)), to: iso(endOfMonth(d)) }
     }
-    case 'next_month': {
-      const d = new Date(today.getFullYear(), today.getMonth() + 1, 1)
-      return { from: iso(startOfMonth(d)), to: iso(endOfMonth(d)) }
-    }
     case 'last_3m': {
       const d = new Date(today.getFullYear(), today.getMonth() - 2, 1)
       return { from: iso(startOfMonth(d)), to: iso(endOfMonth(today)) }
     }
-    case 'last_6m': {
-      const d = new Date(today.getFullYear(), today.getMonth() - 5, 1)
-      return { from: iso(startOfMonth(d)), to: iso(endOfMonth(today)) }
-    }
-    case 'this_year':
-      return { from: `${today.getFullYear()}-01-01`, to: `${today.getFullYear()}-12-31` }
     case 'custom':
       return { from: customFrom || '', to: customTo || '' }
     case 'all_time':

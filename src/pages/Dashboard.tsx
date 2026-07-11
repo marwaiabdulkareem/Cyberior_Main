@@ -12,8 +12,9 @@ import { supabase } from '@/lib/supabase'
 import { Layout } from '@/components/layout/Layout'
 import { KPICard } from '@/components/ui/Card'
 import { StatusBadge } from '@/components/ui/Badge'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
 import {
-  formatCurrency, formatDate, calcCollectionRate, cn,
+  formatCurrency, formatDate, calcCollectionRate,
   getPeriodRange, PERIOD_PRESET_LABELS, type PeriodPreset,
 } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -174,48 +175,18 @@ export default function Dashboard() {
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   }, [data?.rawInstallments, from, to])
 
-  const PERIOD_OPTIONS: { key: PeriodPreset; label: string }[] = [
-    { key: 'this_month', label: PERIOD_PRESET_LABELS.this_month },
-    { key: 'last_month', label: PERIOD_PRESET_LABELS.last_month },
-    { key: 'next_month', label: PERIOD_PRESET_LABELS.next_month },
-    { key: 'last_3m', label: PERIOD_PRESET_LABELS.last_3m },
-    { key: 'last_6m', label: PERIOD_PRESET_LABELS.last_6m },
-    { key: 'this_year', label: PERIOD_PRESET_LABELS.this_year },
-    { key: 'all_time', label: PERIOD_PRESET_LABELS.all_time },
-    { key: 'custom', label: PERIOD_PRESET_LABELS.custom },
-  ]
-
-  const inputDateClass = "rounded-lg bg-brand-surface border border-brand-border text-slate-400 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-teal"
-
   return (
     <Layout title="Dashboard">
       <div className="space-y-6">
 
-        {/* Period Selector */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-slate-500 mr-1">Period:</span>
-          {PERIOD_OPTIONS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setPeriod(key)}
-              className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
-                period === key
-                  ? 'bg-brand-teal text-white'
-                  : 'text-slate-400 hover:text-slate-200 bg-brand-surface border border-brand-border',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-          {period === 'custom' && (
-            <div className="flex items-center gap-2 ml-2">
-              <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className={inputDateClass} />
-              <span className="text-xs text-slate-500">→</span>
-              <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className={inputDateClass} />
-            </div>
-          )}
-        </div>
+        <PeriodSelector
+          value={period}
+          onChange={setPeriod}
+          customFrom={customFrom}
+          customTo={customTo}
+          onCustomFromChange={setCustomFrom}
+          onCustomToChange={setCustomTo}
+        />
 
         {/* KPI Grid — Revenue/Collected respond to the period selector;
             Pending/Overdue are always the current outstanding balance. */}

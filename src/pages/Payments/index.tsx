@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Input'
 import { Table, type Column } from '@/components/ui/Table'
 import { StatusBadge } from '@/components/ui/Badge'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import { formatCurrency, formatDate, getPeriodRange, type PeriodPreset } from '@/lib/utils'
 import { exportInstallmentsToExcel } from '@/lib/export'
 import { PAYMENT_METHOD_LABELS, type Installment } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -45,8 +46,10 @@ export default function Payments() {
   const [search, setSearch] = useState('')
   const [agentFilter, setAgentFilter] = useState('')
   const [methodFilter, setMethodFilter] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [period, setPeriod] = useState<PeriodPreset>('all_time')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const { from, to } = getPeriodRange(period, customFrom, customTo)
 
   const agents = Array.from(
     new Map(payments.map((p) => [p.deal?.agent?.name, p.deal?.agent])).values()
@@ -61,8 +64,8 @@ export default function Payments() {
       p.deal?.agent?.name.toLowerCase().includes(q)
     const matchAgent = !agentFilter || p.deal?.agent?.name === agentFilter
     const matchMethod = !methodFilter || p.payment_method === methodFilter
-    const matchFrom = !dateFrom || (p.paid_date ?? '') >= dateFrom
-    const matchTo = !dateTo || (p.paid_date ?? '') <= dateTo
+    const matchFrom = !from || (p.paid_date ?? '') >= from
+    const matchTo = !to || (p.paid_date ?? '') <= to
     return matchSearch && matchAgent && matchMethod && matchFrom && matchTo
   })
 
@@ -153,20 +156,6 @@ export default function Payments() {
             <Select value={methodFilter} onChange={(e) => setMethodFilter(e.target.value)} placeholder="Payment Method" className="w-40">
               {Object.entries(PAYMENT_METHOD_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="rounded-lg bg-brand-surface border border-brand-border text-slate-400 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
-              placeholder="From"
-            />
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="rounded-lg bg-brand-surface border border-brand-border text-slate-400 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
-              placeholder="To"
-            />
           </div>
           <Button
             variant="secondary"
@@ -177,6 +166,16 @@ export default function Payments() {
             Export
           </Button>
         </div>
+
+        <PeriodSelector
+          value={period}
+          onChange={setPeriod}
+          customFrom={customFrom}
+          customTo={customTo}
+          onCustomFromChange={setCustomFrom}
+          onCustomToChange={setCustomTo}
+          label="Paid Date:"
+        />
 
         {/* Stats */}
         <div className="flex gap-4 text-xs text-slate-500">

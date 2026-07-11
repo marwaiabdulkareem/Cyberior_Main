@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Input'
 import { Table, type Column } from '@/components/ui/Table'
 import { StatusBadge } from '@/components/ui/Badge'
-import { formatCurrency, formatDate, isOverdue, isDueSoon } from '@/lib/utils'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import { formatCurrency, formatDate, isOverdue, isDueSoon, getPeriodRange, type PeriodPreset } from '@/lib/utils'
 import { exportInstallmentsToExcel } from '@/lib/export'
 import { INSTALLMENT_STATUS_LABELS, type Installment, type InstallmentStatus } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -56,8 +57,10 @@ export default function Installments() {
   const { data: installments = [], isLoading } = useInstallments()
   const [tab, setTab] = useState<TabType>('all')
   const [agentFilter, setAgentFilter] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [period, setPeriod] = useState<PeriodPreset>('all_time')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const { from, to } = getPeriodRange(period, customFrom, customTo)
 
   const agents = Array.from(
     new Map(installments.map((i) => [i.deal?.agent?.name, i.deal?.agent])).values()
@@ -68,8 +71,8 @@ export default function Installments() {
 
   const filtered = installments.filter((i) => {
     const matchAgent = !agentFilter || i.deal?.agent?.name === agentFilter
-    const matchFrom = !dateFrom || i.due_date >= dateFrom
-    const matchTo = !dateTo || i.due_date <= dateTo
+    const matchFrom = !from || i.due_date >= from
+    const matchTo = !to || i.due_date <= to
 
     let matchTab = true
     if (tab === 'pending') matchTab = i.status === 'pending'
@@ -209,27 +212,25 @@ export default function Installments() {
         </div>
 
         {/* Filters */}
-        <div className="flex gap-3 flex-wrap">
+        <div className="flex gap-3 flex-wrap items-center">
           <Select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)} placeholder="All Agents" className="w-36">
             {agents.map((a) => <option key={a!.id} value={a!.name}>{a!.name}</option>)}
           </Select>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="rounded-lg bg-brand-surface border border-brand-border text-slate-400 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
-          />
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="rounded-lg bg-brand-surface border border-brand-border text-slate-400 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-teal"
-          />
           <Button variant="secondary" size="sm" onClick={() => exportInstallmentsToExcel(filtered)}>
             <Download size={14} />
             Export
           </Button>
         </div>
+
+        <PeriodSelector
+          value={period}
+          onChange={setPeriod}
+          customFrom={customFrom}
+          customTo={customTo}
+          onCustomFromChange={setCustomFrom}
+          onCustomToChange={setCustomTo}
+          label="Due Date:"
+        />
 
         {/* Stats */}
         <div className="text-xs text-slate-500">
