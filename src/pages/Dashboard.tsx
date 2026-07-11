@@ -12,7 +12,10 @@ import { supabase } from '@/lib/supabase'
 import { Layout } from '@/components/layout/Layout'
 import { KPICard } from '@/components/ui/Card'
 import { StatusBadge } from '@/components/ui/Badge'
-import { formatCurrency, formatDate, calcCollectionRate, cn } from '@/lib/utils'
+import {
+  formatCurrency, formatDate, calcCollectionRate, cn,
+  getPeriodRange, PERIOD_PRESET_LABELS, type PeriodPreset,
+} from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import type { Deal, Installment } from '@/types'
 
@@ -25,11 +28,11 @@ function useDashboardData() {
       const [dealsRes, installmentsRes] = await Promise.all([
         supabase
           .from('deals')
-          .select('*, customer:customers(*), product:products(*), agent:sales_agents(*), installments(*)')
+          .select('*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*), installments(*)')
           .neq('status', 'cancelled'),
         supabase
           .from('installments')
-          .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents(*))')
+          .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*))')
           .order('due_date', { ascending: true }),
       ])
 
@@ -37,16 +40,19 @@ function useDashboardData() {
       const installments = (installmentsRes.data ?? []) as Installment[]
 
       const today = new Date()
-      const thisMonth = today.toISOString().slice(0, 7)
 
       const totalRevenue = deals.reduce((s, d) => s + d.deal_price_usd, 0)
-      const totalCollected = installments.reduce((s, i) => s + i.amount_paid, 0)
+      // "Collected" always means real money in hand — sum amount_paid across
+      // any installment that has money against it (paid or partially paid),
+      // never sliced by when the *deal* was created (that's a different axis).
+      const totalCollected = installments
+        .filter((i) => i.status === 'paid' || i.status === 'partial')
+        .reduce((s, i) => s + i.amount_paid, 0)
       const totalOverdue = installments
         .filter((i) => i.status === 'late')
         .reduce((s, i) => s + (i.amount_due - i.amount_paid), 0)
       const totalPending = totalRevenue - totalCollected
 
-      const newDealsThisMonth = deals.filter((d) => d.created_at?.startsWith(thisMonth)).length
       const fullyPaid = deals.filter((d) => d.status === 'completed').length
       const installmentDeals = deals.filter((d) => d.payment_type === 'installment').length
       const overdueCount = installments.filter((i) => i.status === 'late').length
@@ -61,11 +67,15 @@ function useDashboardData() {
       }
       deals.forEach((d) => {
         const key = d.created_at?.slice(0, 7)
-        if (key && monthMap[key]) {
-          monthMap[key].revenue += d.deal_price_usd
-          const collected = d.installments?.reduce((s, i) => s + i.amount_paid, 0) ?? 0
-          monthMap[key].collected += collected
-        }
+        if (key && monthMap[key]) monthMap[key].revenue += d.deal_price_usd
+      })
+      // Collected is bucketed by the payment's own paid_date, not the
+      // deal's creation date — a deal created in March but paid in June
+      // must show as June cash, not March.
+      installments.forEach((i) => {
+        if (i.status !== 'paid' && i.status !== 'partial') return
+        const key = i.paid_date?.slice(0, 7)
+        if (key && monthMap[key]) monthMap[key].collected += i.amount_paid
       })
       const revenueByMonth = Object.entries(monthMap).map(([month, vals]) => ({
         month: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short' }),
@@ -90,13 +100,6 @@ function useDashboardData() {
       })
       const revenueByProgram = Object.values(programMap)
 
-      // Upcoming installments (next 7 days)
-      const in7days = new Date(today.getTime() + 7 * 86400000).toISOString().slice(0, 10)
-      const todayStr = today.toISOString().slice(0, 10)
-      const upcoming = installments.filter(
-        (i) => i.status === 'pending' && i.due_date >= todayStr && i.due_date <= in7days
-      )
-
       // Overdue list
       const overdueList = installments.filter((i) => i.status === 'late').slice(0, 10)
 
@@ -111,12 +114,13 @@ function useDashboardData() {
       return {
         kpis: {
           totalRevenue, totalCollected, totalPending, totalOverdue,
-          activeStudents, newDealsThisMonth, fullyPaid, installmentDeals,
+          activeStudents, fullyPaid, installmentDeals,
           overdueCount, collectionRate: calcCollectionRate(totalCollected, totalRevenue),
         },
         revenueByMonth, revenueByAgent, revenueByProgram, paymentSplit,
-        upcoming, overdueList,
+        overdueList,
         rawDeals: deals,
+        rawInstallments: installments,
       }
     },
     refetchInterval: 5 * 60 * 1000,
@@ -126,57 +130,59 @@ function useDashboardData() {
 export default function Dashboard() {
   const { data, isLoading } = useDashboardData()
 
-  const [period, setPeriod] = useState<'this_month' | 'last_3m' | 'last_6m' | 'all_time' | 'custom'>('all_time')
+  const [period, setPeriod] = useState<PeriodPreset>('this_month')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
 
-  const thisMonthKey = new Date().toISOString().slice(0, 7)
-  const thisMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const { from, to } = useMemo(
+    () => getPeriodRange(period, customFrom, customTo),
+    [period, customFrom, customTo]
+  )
 
-  const filteredDeals = useMemo(() => {
+  // Revenue = new deals booked in the period (by creation date).
+  const periodDeals = useMemo(() => {
     const all = data?.rawDeals ?? []
-    if (period === 'this_month') return all.filter(d => d.created_at?.startsWith(thisMonthKey))
-    if (period === 'last_3m') {
-      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 3)
-      const s = cutoff.toISOString().slice(0, 10)
-      return all.filter(d => (d.created_at?.slice(0, 10) ?? '') >= s)
-    }
-    if (period === 'last_6m') {
-      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 6)
-      const s = cutoff.toISOString().slice(0, 10)
-      return all.filter(d => (d.created_at?.slice(0, 10) ?? '') >= s)
-    }
-    if (period === 'custom') {
-      return all.filter(d => {
-        const date = d.created_at?.slice(0, 10) ?? ''
-        return (!customFrom || date >= customFrom) && (!customTo || date <= customTo)
-      })
-    }
+    return all.filter((d) => {
+      const date = d.created_at?.slice(0, 10) ?? ''
+      return (!from || date >= from) && (!to || date <= to)
+    })
+  }, [data?.rawDeals, from, to])
+
+  // Collected = real money received in the period, by the payment's own
+  // paid_date — completely independent of when the underlying deal was
+  // created. Pending/Overdue are deliberately NOT period-sliced: they're a
+  // right-now outstanding balance, not a period flow, so they always match
+  // Reports/Payments regardless of which period is selected.
+  const periodCollected = useMemo(() => {
+    const all = data?.rawInstallments ?? []
     return all
-  }, [data?.rawDeals, period, customFrom, customTo, thisMonthKey])
+      .filter((i) => (i.status === 'paid' || i.status === 'partial') && i.paid_date)
+      .filter((i) => (!from || i.paid_date! >= from) && (!to || i.paid_date! <= to))
+      .reduce((s, i) => s + i.amount_paid, 0)
+  }, [data?.rawInstallments, from, to])
 
-  const filteredKpis = useMemo(() => {
-    const revenue = filteredDeals.reduce((s, d) => s + d.deal_price_usd, 0)
-    const collected = filteredDeals.reduce((s, d) => s + (d.installments?.reduce((a, i) => a + i.amount_paid, 0) ?? 0), 0)
-    const pending = revenue - collected
-    const overdue = filteredDeals.flatMap(d => d.installments ?? []).filter(i => i.status === 'late').reduce((s, i) => s + Math.max(0, i.amount_due - i.amount_paid), 0)
-    const overdueCount = filteredDeals.flatMap(d => d.installments ?? []).filter(i => i.status === 'late').length
-    return { revenue, collected, pending, overdue, overdueCount, collectionRate: calcCollectionRate(collected, revenue) }
-  }, [filteredDeals])
+  const periodRevenue = periodDeals.reduce((s, d) => s + d.deal_price_usd, 0)
 
-  const thisMonthKpis = useMemo(() => {
-    const deals = (data?.rawDeals ?? []).filter(d => d.created_at?.startsWith(thisMonthKey))
-    const revenue = deals.reduce((s, d) => s + d.deal_price_usd, 0)
-    const collected = deals.reduce((s, d) => s + (d.installments?.reduce((a, i) => a + i.amount_paid, 0) ?? 0), 0)
-    return { revenue, collected, pending: revenue - collected, deals: deals.length }
-  }, [data?.rawDeals, thisMonthKey])
+  // Due-in-period list: for a forward period like "Next Month" this shows
+  // what's expected; for a past/current period it shows what's still
+  // outstanding and due within that window.
+  const periodDue = useMemo(() => {
+    const all = data?.rawInstallments ?? []
+    return all
+      .filter((i) => i.status === 'pending' && i.due_date)
+      .filter((i) => (!from || i.due_date >= from) && (!to || i.due_date <= to))
+      .sort((a, b) => a.due_date.localeCompare(b.due_date))
+  }, [data?.rawInstallments, from, to])
 
-  const PERIOD_OPTIONS = [
-    { key: 'this_month' as const, label: 'This Month' },
-    { key: 'last_3m' as const, label: 'Last 3M' },
-    { key: 'last_6m' as const, label: 'Last 6M' },
-    { key: 'all_time' as const, label: 'All Time' },
-    { key: 'custom' as const, label: 'Custom' },
+  const PERIOD_OPTIONS: { key: PeriodPreset; label: string }[] = [
+    { key: 'this_month', label: PERIOD_PRESET_LABELS.this_month },
+    { key: 'last_month', label: PERIOD_PRESET_LABELS.last_month },
+    { key: 'next_month', label: PERIOD_PRESET_LABELS.next_month },
+    { key: 'last_3m', label: PERIOD_PRESET_LABELS.last_3m },
+    { key: 'last_6m', label: PERIOD_PRESET_LABELS.last_6m },
+    { key: 'this_year', label: PERIOD_PRESET_LABELS.this_year },
+    { key: 'all_time', label: PERIOD_PRESET_LABELS.all_time },
+    { key: 'custom', label: PERIOD_PRESET_LABELS.custom },
   ]
 
   const inputDateClass = "rounded-lg bg-brand-surface border border-brand-border text-slate-400 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-teal"
@@ -184,35 +190,6 @@ export default function Dashboard() {
   return (
     <Layout title="Dashboard">
       <div className="space-y-6">
-
-        {/* This Month Highlight */}
-        <div className="rounded-xl bg-brand-teal/10 border border-brand-teal/30 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-brand-teal flex items-center gap-2">
-              <Calendar size={14} />
-              {thisMonthLabel}
-            </h3>
-            <span className="text-xs text-slate-500">This Month</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <p className="text-xs text-slate-500">Revenue</p>
-              <p className="text-xl font-bold text-slate-100">{formatCurrency(thisMonthKpis.revenue)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Collected</p>
-              <p className="text-xl font-bold text-green-400">{formatCurrency(thisMonthKpis.collected)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Pending</p>
-              <p className="text-xl font-bold text-yellow-400">{formatCurrency(thisMonthKpis.pending)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">New Deals</p>
-              <p className="text-xl font-bold text-brand-teal">{thisMonthKpis.deals}</p>
-            </div>
-          </div>
-        </div>
 
         {/* Period Selector */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -240,31 +217,33 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* KPI Grid — responds to period selector */}
+        {/* KPI Grid — Revenue/Collected respond to the period selector;
+            Pending/Overdue are always the current outstanding balance. */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <KPICard
             title={period === 'all_time' ? 'Total Revenue' : 'Revenue'}
-            value={formatCurrency(filteredKpis.revenue)}
+            value={formatCurrency(periodRevenue)}
+            subtitle={`${periodDeals.length} new deal${periodDeals.length === 1 ? '' : 's'}`}
             icon={<DollarSign size={16} />}
             color="teal"
           />
           <KPICard
             title="Collected"
-            value={formatCurrency(filteredKpis.collected)}
-            subtitle={`${filteredKpis.collectionRate}% collection rate`}
+            value={formatCurrency(periodCollected)}
             icon={<CheckCircle size={16} />}
             color="green"
           />
           <KPICard
             title="Pending"
-            value={formatCurrency(filteredKpis.pending)}
+            value={formatCurrency(data?.kpis.totalPending ?? 0)}
+            subtitle="Current outstanding balance"
             icon={<Clock size={16} />}
             color="gold"
           />
           <KPICard
             title="Overdue"
-            value={formatCurrency(filteredKpis.overdue)}
-            subtitle={`${filteredKpis.overdueCount} overdue installments`}
+            value={formatCurrency(data?.kpis.totalOverdue ?? 0)}
+            subtitle={`${data?.kpis.overdueCount ?? 0} overdue installments`}
             icon={<AlertCircle size={16} />}
             color="red"
           />
@@ -278,8 +257,8 @@ export default function Dashboard() {
             color="purple"
           />
           <KPICard
-            title="New Deals (Month)"
-            value={data?.kpis.newDealsThisMonth ?? 0}
+            title="New Deals"
+            value={periodDeals.length}
             icon={<TrendingUp size={16} />}
             color="teal"
           />
@@ -393,17 +372,20 @@ export default function Dashboard() {
 
         {/* Tables Row */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Upcoming Payments */}
+          {/* Due Payments — respects the period selector (e.g. "Next Month"
+              shows what's expected, "This Month" shows what's still unpaid) */}
           <div className="rounded-xl bg-brand-surface border border-brand-border">
             <div className="px-5 py-4 border-b border-brand-border">
-              <h3 className="text-sm font-semibold text-slate-200">Upcoming Payments (7 days)</h3>
+              <h3 className="text-sm font-semibold text-slate-200">
+                Due Payments — {PERIOD_PRESET_LABELS[period]}
+              </h3>
             </div>
             <div className="p-4">
-              {data?.upcoming.length === 0 ? (
-                <p className="text-xs text-slate-500 text-center py-4">No upcoming payments</p>
+              {periodDue.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-4">No payments due in this period</p>
               ) : (
                 <div className="space-y-2">
-                  {data?.upcoming.map((i) => (
+                  {periodDue.slice(0, 15).map((i) => (
                     <div key={i.id} className="flex items-center justify-between p-3 rounded-lg bg-brand-navy">
                       <div>
                         <p className="text-xs font-medium text-slate-200">{i.deal?.customer?.full_name}</p>
@@ -415,6 +397,9 @@ export default function Dashboard() {
                       </div>
                     </div>
                   ))}
+                  {periodDue.length > 15 && (
+                    <p className="text-xs text-slate-500 text-center pt-1">+{periodDue.length - 15} more</p>
+                  )}
                 </div>
               )}
             </div>
