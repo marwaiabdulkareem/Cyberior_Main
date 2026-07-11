@@ -67,7 +67,11 @@ function useDashboardData() {
         monthMap[key] = { revenue: 0, collected: 0 }
       }
       deals.forEach((d) => {
-        const key = d.created_at?.slice(0, 7)
+        // Bucketed by start_date (= the first installment's due date), not
+        // the row's created_at — deals are often entered late/in batches,
+        // so the DB insert timestamp doesn't reflect which month a deal
+        // actually belongs to.
+        const key = d.start_date?.slice(0, 7)
         if (key && monthMap[key]) monthMap[key].revenue += d.deal_price_usd
       })
       // Collected is bucketed by the payment's own paid_date, not the
@@ -140,11 +144,13 @@ export default function Dashboard() {
     [period, customFrom, customTo]
   )
 
-  // Revenue = new deals booked in the period (by creation date).
+  // Revenue = new deals booked in the period, by start_date (the first
+  // installment's due date) — not created_at, since deals are often
+  // entered into the system days/weeks after they actually started.
   const periodDeals = useMemo(() => {
     const all = data?.rawDeals ?? []
     return all.filter((d) => {
-      const date = d.created_at?.slice(0, 10) ?? ''
+      const date = d.start_date ?? ''
       return (!from || date >= from) && (!to || date <= to)
     })
   }, [data?.rawDeals, from, to])
