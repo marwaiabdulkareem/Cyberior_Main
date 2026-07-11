@@ -20,7 +20,7 @@ function usePayments() {
     queryFn: async () => {
       let q = supabase
         .from('installments')
-        .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents(*))')
+        .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*))')
         .eq('status', 'paid')
         .order('paid_date', { ascending: false })
 
@@ -28,7 +28,7 @@ function usePayments() {
         const { data: agentData } = await supabase
           .from('sales_agents').select('id').eq('profile_id', profile.id).single()
         if (agentData) {
-          q = (q as typeof q).eq('deal.agent_id', agentData.id)
+          q = (q as typeof q).or(`deal.agent_id.eq.${agentData.id},deal.co_agent_id.eq.${agentData.id}`)
         }
       }
 

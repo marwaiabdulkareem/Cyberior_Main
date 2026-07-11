@@ -22,7 +22,7 @@ function useDeals() {
     queryFn: async () => {
       let q = supabase
         .from('deals')
-        .select('*, customer:customers(*), product:products(*), agent:sales_agents(*), installments(*)')
+        .select('*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*), co_agent:sales_agents!deals_co_agent_id_fkey(*), installments(*)')
         .order('created_at', { ascending: false })
 
       if (!isAdmin && !isFinance && profile) {
@@ -32,7 +32,7 @@ function useDeals() {
           .eq('profile_id', profile.id)
           .single()
         if (agentData) {
-          q = q.eq('agent_id', agentData.id)
+          q = q.or(`agent_id.eq.${agentData.id},co_agent_id.eq.${agentData.id}`)
         }
       }
 
@@ -56,7 +56,9 @@ export default function Deals() {
   const [paymentFilter, setPaymentFilter] = useState<PaymentType | ''>('')
   const [agentFilter, setAgentFilter] = useState('')
 
-  const agents = Array.from(new Map(deals.map((d) => [d.agent?.name, d.agent])).values()).filter(Boolean)
+  const agents = Array.from(new Map(
+    deals.flatMap((d) => [[d.agent?.name, d.agent], [d.co_agent?.name, d.co_agent]] as const)
+  ).values()).filter(Boolean)
 
   const filtered = deals.filter((d) => {
     const q = search.toLowerCase()
@@ -64,12 +66,13 @@ export default function Deals() {
       !q ||
       d.customer?.full_name.toLowerCase().includes(q) ||
       d.product?.name.toLowerCase().includes(q) ||
-      d.agent?.name.toLowerCase().includes(q)
+      d.agent?.name.toLowerCase().includes(q) ||
+      d.co_agent?.name.toLowerCase().includes(q)
     return (
       matchSearch &&
       (!statusFilter || d.status === statusFilter) &&
       (!paymentFilter || d.payment_type === paymentFilter) &&
-      (!agentFilter || d.agent?.name === agentFilter)
+      (!agentFilter || d.agent?.name === agentFilter || d.co_agent?.name === agentFilter)
     )
   })
 
@@ -95,7 +98,16 @@ export default function Deals() {
     {
       key: 'agent',
       header: 'Agent',
-      render: (d) => d.agent?.name ?? '—',
+      render: (d) => (
+        <div className="flex items-center gap-1.5">
+          <span>{d.agent?.name ?? '—'}</span>
+          {d.co_agent && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-teal/10 text-brand-teal border border-brand-teal/20">
+              + {d.co_agent.name}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'deal_price_usd',

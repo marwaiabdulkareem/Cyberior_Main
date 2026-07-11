@@ -21,7 +21,7 @@ function useInstallments() {
     queryFn: async () => {
       let q = supabase
         .from('installments')
-        .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents(*))')
+        .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*))')
         .neq('status', 'cancelled')
         .order('due_date', { ascending: true })
 
@@ -30,7 +30,7 @@ function useInstallments() {
           .from('sales_agents').select('id').eq('profile_id', profile.id).single()
         if (agentData) {
           const { data: dealIds } = await supabase
-            .from('deals').select('id').eq('agent_id', agentData.id)
+            .from('deals').select('id').or(`agent_id.eq.${agentData.id},co_agent_id.eq.${agentData.id}`)
           const ids = dealIds?.map((d: { id: string }) => d.id) ?? []
           if (ids.length) q = q.in('deal_id', ids)
         }

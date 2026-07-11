@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase'
 import { Layout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Input'
-import { formatCurrency, calcCommission, calcCollectionRate } from '@/lib/utils'
+import { formatCurrency, calcCommission, calcCollectionRate, calcAgentShare } from '@/lib/utils'
 import {
   exportDealsToExcel, exportInstallmentsToExcel,
   exportAgentReportToExcel, exportOverdueToExcel,
@@ -23,11 +23,11 @@ function useReportData(agentFilter: string, productFilter: string, dateFrom: str
       const [dealsRes, installmentsRes, agentsRes] = await Promise.all([
         supabase
           .from('deals')
-          .select('*, customer:customers(*), product:products(*), agent:sales_agents(*), installments(*)')
+          .select('*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*), co_agent:sales_agents!deals_co_agent_id_fkey(*), installments(*)')
           .neq('status', 'cancelled'),
         supabase
           .from('installments')
-          .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents(*), payment_plan:payment_plans(*))'),
+          .select('*, deal:deals(*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*), co_agent:sales_agents!deals_co_agent_id_fkey(*), payment_plan:payment_plans(*))'),
         supabase.from('sales_agents').select('*').eq('is_active', true),
       ])
 
@@ -35,7 +35,7 @@ function useReportData(agentFilter: string, productFilter: string, dateFrom: str
       let installments = (installmentsRes.data ?? []) as Installment[]
       const agents = (agentsRes.data ?? []) as SalesAgent[]
 
-      if (agentFilter) deals = deals.filter((d) => d.agent?.name === agentFilter)
+      if (agentFilter) deals = deals.filter((d) => d.agent?.name === agentFilter || d.co_agent?.name === agentFilter)
       if (productFilter) deals = deals.filter((d) => d.product?.name === productFilter)
       if (dateFrom) deals = deals.filter((d) => (d.start_date ?? '') >= dateFrom)
       if (dateTo) deals = deals.filter((d) => (d.start_date ?? '') <= dateTo)
@@ -97,15 +97,16 @@ export default function Reports() {
   const commissionRows = useMemo(() => {
     const rows: CommissionRow[] = []
     agents.forEach((agent) => {
-      const agentPaid = paidInPeriod.filter((i) => i.deal?.agent_id === agent.id)
+      const agentPaid = paidInPeriod.filter((i) => i.deal?.agent_id === agent.id || i.deal?.co_agent_id === agent.id)
       if (agentPaid.length === 0) {
         rows.push({ agentName: agent.name, rate: agent.commission_rate, currency: 'USD', otherLabel: null, collected: 0, commission: 0 })
         return
       }
       const byCurrency = new Map<Currency, { collected: number; otherLabel: string | null }>()
       agentPaid.forEach((i) => {
+        const share = calcAgentShare(i.deal!, agent.id)
         const bucket = byCurrency.get(i.currency) ?? { collected: 0, otherLabel: i.other_currency_label }
-        bucket.collected += collectedAmountOf(i)
+        bucket.collected += collectedAmountOf(i) * share
         byCurrency.set(i.currency, bucket)
       })
       byCurrency.forEach((bucket, currency) => {
@@ -127,17 +128,29 @@ export default function Reports() {
   const totalOverdue = installments.filter((i) => i.status === 'late').reduce((s, i) => s + (i.amount_due - i.amount_paid), 0)
   const collectionRate = calcCollectionRate(totalCollected, totalRevenue)
 
-  const agentNames = Array.from(new Set(deals.map((d) => d.agent?.name).filter(Boolean)))
+  const agentNames = Array.from(new Set(
+    deals.flatMap((d) => [d.agent?.name, d.co_agent?.name]).filter(Boolean)
+  ))
   const productNames = Array.from(new Set(deals.map((d) => d.product?.name).filter(Boolean)))
 
-  // Revenue by agent for chart
+  // Revenue by agent for chart — each deal's contribution is weighted by
+  // this agent's share, so a shared deal never gets double-counted overall.
   const agentChart = agents.map((agent) => {
-    const agentDeals = deals.filter((d) => d.agent_id === agent.id)
-    const revenue = agentDeals.reduce((s, d) => s + d.deal_price_usd, 0)
+    const agentDeals = deals.filter((d) => d.agent_id === agent.id || d.co_agent_id === agent.id)
+    const revenue = agentDeals.reduce((s, d) => s + d.deal_price_usd * calcAgentShare(d, agent.id), 0)
     const collected = agentDeals.reduce((s, d) => {
-      return s + (d.installments?.reduce((a: number, i: { amount_paid: number }) => a + i.amount_paid, 0) ?? 0)
+      const dealCollected = d.installments?.reduce((a: number, i: { amount_paid: number }) => a + i.amount_paid, 0) ?? 0
+      return s + dealCollected * calcAgentShare(d, agent.id)
     }, 0)
-    return { name: agent.name, revenue, collected, commission: calcCommission(revenue, agent.commission_rate) }
+    const overdue = agentDeals.reduce((s, d) => {
+      const dealOverdue = d.installments?.filter((i: { status: string }) => i.status === 'late')
+        .reduce((a: number, i: { amount_due: number; amount_paid: number }) => a + (i.amount_due - i.amount_paid), 0) ?? 0
+      return s + dealOverdue * calcAgentShare(d, agent.id)
+    }, 0)
+    return {
+      agentId: agent.id, name: agent.name, revenue, collected, overdue,
+      dealCount: agentDeals.length, commission: calcCommission(revenue, agent.commission_rate),
+    }
   })
 
   // Revenue by program
@@ -249,21 +262,13 @@ export default function Reports() {
               </thead>
               <tbody>
                 {agentChart.map((row) => (
-                  <tr key={row.name} className="border-b border-brand-border/50 hover:bg-brand-border/20">
+                  <tr key={row.agentId} className="border-b border-brand-border/50 hover:bg-brand-border/20">
                     <td className="px-4 py-3 text-slate-200 font-medium">{row.name}</td>
-                    <td className="px-4 py-3 text-slate-400">
-                      {deals.filter((d) => d.agent?.name === row.name).length}
-                    </td>
+                    <td className="px-4 py-3 text-slate-400">{row.dealCount}</td>
                     <td className="px-4 py-3 text-brand-teal font-medium">{formatCurrency(row.revenue)}</td>
                     <td className="px-4 py-3 text-green-400">{formatCurrency(row.collected)}</td>
                     <td className="px-4 py-3 text-yellow-400">{formatCurrency(row.revenue - row.collected)}</td>
-                    <td className="px-4 py-3 text-red-400">
-                      {formatCurrency(
-                        installments
-                          .filter((i) => i.status === 'late' && i.deal?.agent?.name === row.name)
-                          .reduce((s, i) => s + (i.amount_due - i.amount_paid), 0)
-                      )}
-                    </td>
+                    <td className="px-4 py-3 text-red-400">{formatCurrency(row.overdue)}</td>
                     <td className="px-4 py-3 text-brand-gold font-medium">{formatCurrency(row.commission)}</td>
                   </tr>
                 ))}

@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { formatDate, formatCurrency } from './utils'
+import { formatDate, formatCurrency, calcCommission, calcAgentShare } from './utils'
 import type { Deal, Installment, Customer, SalesAgent } from '@/types'
 
 function downloadWorkbook(wb: XLSX.WorkBook, fileName: string) {
@@ -66,13 +66,13 @@ export function exportInstallmentsToExcel(installments: Installment[]) {
 
 export function exportAgentReportToExcel(agents: SalesAgent[], deals: Deal[]) {
   const rows = agents.map((agent) => {
-    const agentDeals = deals.filter((d) => d.agent_id === agent.id)
-    const totalSales = agentDeals.reduce((s, d) => s + d.deal_price_usd, 0)
+    const agentDeals = deals.filter((d) => d.agent_id === agent.id || d.co_agent_id === agent.id)
+    const totalSales = agentDeals.reduce((s, d) => s + d.deal_price_usd * calcAgentShare(d, agent.id), 0)
     const collected = agentDeals.reduce((s, d) => {
       const paid = d.installments?.reduce((a, i) => a + i.amount_paid, 0) ?? 0
-      return s + paid
+      return s + paid * calcAgentShare(d, agent.id)
     }, 0)
-    const commission = (totalSales * agent.commission_rate) / 100
+    const commission = calcCommission(totalSales, agent.commission_rate)
     return {
       'Agent': agent.name,
       'Email': agent.email ?? '',

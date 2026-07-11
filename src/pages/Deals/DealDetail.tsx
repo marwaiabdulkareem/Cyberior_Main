@@ -47,7 +47,7 @@ export default function DealDetail() {
     queryFn: async () => {
       const { data } = await supabase
         .from('deals')
-        .select('*, customer:customers(*), product:products(*), agent:sales_agents(*), installments(*), payment_plan:payment_plans(*)')
+        .select('*, customer:customers(*), product:products(*), agent:sales_agents!deals_agent_id_fkey(*), co_agent:sales_agents!deals_co_agent_id_fkey(*), installments(*), payment_plan:payment_plans(*)')
         .eq('id', id!)
         .single()
       return data as Deal & { payment_plan: PaymentPlan | null }
@@ -160,8 +160,8 @@ export default function DealDetail() {
   const totalPaid = installments.reduce((s, i) => s + i.amount_paid, 0)
   const totalRemaining = deal.deal_price_usd - totalPaid
   const completionPct = deal.deal_price_usd > 0 ? Math.min(100, Math.round((totalPaid / deal.deal_price_usd) * 100)) : 0
-  const canEdit = isAdmin || (isAgent && deal.agent?.profile_id === user?.id)
-  const canPay = isAdmin || isFinance || (isAgent && deal.agent?.profile_id === user?.id)
+  const canEdit = isAdmin || (isAgent && (deal.agent?.profile_id === user?.id || deal.co_agent?.profile_id === user?.id))
+  const canPay = isAdmin || isFinance || (isAgent && (deal.agent?.profile_id === user?.id || deal.co_agent?.profile_id === user?.id))
 
   // Each installment can be paid in a different currency, so local-currency
   // totals are grouped per currency rather than summed into one number.
@@ -244,6 +244,17 @@ export default function DealDetail() {
               <p className="text-xs text-slate-500">Sales Agent</p>
               <p className="text-sm font-medium text-slate-200">{deal.agent?.name}</p>
             </div>
+            {deal.co_agent && (
+              <div>
+                <p className="text-xs text-slate-500">Co-Agent</p>
+                <p className="text-sm font-medium text-slate-200">
+                  {deal.co_agent.name}
+                  <span className="text-xs text-slate-500">
+                    {' '}({deal.co_agent_split_pct ?? 50}% / {100 - (deal.co_agent_split_pct ?? 50)}%)
+                  </span>
+                </p>
+              </div>
+            )}
             <div>
               <p className="text-xs text-slate-500">Status</p>
               <StatusBadge status={deal.status} className="mt-1" />

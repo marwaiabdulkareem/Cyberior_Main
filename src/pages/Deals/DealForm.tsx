@@ -17,6 +17,8 @@ const schema = z.object({
   customer_id: z.string().min(1, 'Customer is required'),
   product_id: z.string().min(1, 'Program is required'),
   agent_id: z.string().min(1, 'Agent is required'),
+  co_agent_id: z.string().optional(),
+  co_agent_split_pct: z.coerce.number().min(0).max(100).optional(),
   deal_price_usd: z.coerce.number().positive('Price must be positive'),
   payment_type: z.enum(['full', 'installment']),
   start_date: z.string().min(1, 'Start date is required'),
@@ -32,6 +34,9 @@ const schema = z.object({
   if (data.currency === 'OTHER' && !data.other_currency_label?.trim()) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['other_currency_label'], message: 'Enter the currency name' })
   }
+  if (data.co_agent_id && data.co_agent_id === data.agent_id) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['co_agent_id'], message: 'Co-agent must differ from the primary agent' })
+  }
 })
 
 type FormData = z.infer<typeof schema>
@@ -43,7 +48,7 @@ interface DealFormProps {
 }
 
 export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
-  const { user } = useAuth()
+  const { user, isAdmin } = useAuth()
   const [selectedProduct, setSelectedProduct] = useState<{
     one_time_price_usd: number; installment_monthly_price_usd: number; installment_months: number
   } | null>(null)
@@ -78,6 +83,8 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
       customer_id: defaultCustomerId ?? deal?.customer_id ?? '',
       product_id: deal?.product_id ?? '',
       agent_id: deal?.agent_id ?? '',
+      co_agent_id: deal?.co_agent_id ?? '',
+      co_agent_split_pct: deal?.co_agent_split_pct ?? 50,
       deal_price_usd: deal?.deal_price_usd ?? 0,
       payment_type: deal?.payment_type === 'installment' ? 'installment' : 'full',
       start_date: deal?.start_date ?? format(new Date(), 'yyyy-MM-dd'),
@@ -91,6 +98,8 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
   const { fields, replace } = useFieldArray({ control, name: 'installments' })
 
   const watchProduct = watch('product_id')
+  const watchAgentId = watch('agent_id')
+  const watchCoAgentId = watch('co_agent_id')
   const watchPrice = watch('deal_price_usd')
   const watchPaymentType = watch('payment_type')
   const watchStartDate = watch('start_date')
@@ -138,6 +147,10 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
         customer_id: data.customer_id,
         product_id: data.product_id,
         agent_id: data.agent_id,
+        co_agent_id: isAdmin ? (data.co_agent_id || null) : (deal?.co_agent_id ?? null),
+        co_agent_split_pct: isAdmin
+          ? (data.co_agent_id ? (data.co_agent_split_pct ?? 50) : null)
+          : (deal?.co_agent_split_pct ?? null),
         deal_price_usd: totalAmount,
         discount_amount: 0,
         payment_type: data.payment_type,
@@ -282,6 +295,28 @@ export function DealForm({ onClose, deal, defaultCustomerId }: DealFormProps) {
             {...register('start_date')}
           />
         </div>
+
+        {/* Co-Agent (shared commission) — admin only */}
+        {isAdmin && (
+          <div className="grid grid-cols-2 gap-4">
+            <Select label="Co-Agent (optional, shared commission)" placeholder="None" {...register('co_agent_id')}>
+              {agents.filter((a: { id: string }) => a.id !== watchAgentId).map((a: { id: string; name: string }) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </Select>
+            {watchCoAgentId && (
+              <Input
+                label="Primary Agent Split (%)"
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                error={errors.co_agent_split_pct?.message}
+                {...register('co_agent_split_pct')}
+              />
+            )}
+          </div>
+        )}
 
         {/* Payment Way + Currency */}
         <div className="grid grid-cols-2 gap-4">

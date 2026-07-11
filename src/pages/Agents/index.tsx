@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { Card } from '@/components/ui/Card'
-import { formatCurrency, calcCommission } from '@/lib/utils'
+import { formatCurrency, calcCommission, calcAgentShare } from '@/lib/utils'
 import type { SalesAgent, Deal } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
@@ -121,13 +121,15 @@ export default function Agents() {
   })
 
   function getAgentStats(agentId: string) {
-    const agentDeals = deals.filter((d) => d.agent_id === agentId)
-    const totalSales = agentDeals.reduce((s, d) => s + d.deal_price_usd, 0)
+    const agentDeals = deals.filter((d) => d.agent_id === agentId || d.co_agent_id === agentId)
+    const totalSales = agentDeals.reduce((s, d) => s + d.deal_price_usd * calcAgentShare(d, agentId), 0)
     const collected = agentDeals.reduce((s, d) => {
-      return s + (d.installments?.reduce((a: number, i: { amount_paid: number }) => a + i.amount_paid, 0) ?? 0)
+      const dealCollected = d.installments?.reduce((a: number, i: { amount_paid: number }) => a + i.amount_paid, 0) ?? 0
+      return s + dealCollected * calcAgentShare(d, agentId)
     }, 0)
     const overdue = agentDeals.reduce((s, d) => {
-      return s + (d.installments?.filter((i: { status: string }) => i.status === 'late').reduce((a: number, i: { amount_due: number; amount_paid: number }) => a + (i.amount_due - i.amount_paid), 0) ?? 0)
+      const dealOverdue = d.installments?.filter((i: { status: string }) => i.status === 'late').reduce((a: number, i: { amount_due: number; amount_paid: number }) => a + (i.amount_due - i.amount_paid), 0) ?? 0
+      return s + dealOverdue * calcAgentShare(d, agentId)
     }, 0)
     const agent = agents.find((a) => a.id === agentId)
     const commission = calcCommission(totalSales, agent?.commission_rate ?? 10)

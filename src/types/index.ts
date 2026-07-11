@@ -66,6 +66,8 @@ export interface Deal {
   customer_id: string
   product_id: string
   agent_id: string
+  co_agent_id: string | null
+  co_agent_split_pct: number | null
   deal_price_usd: number
   deal_price_iqd: number | null
   discount_amount: number
@@ -81,6 +83,7 @@ export interface Deal {
   customer?: Customer
   product?: Product
   agent?: SalesAgent
+  co_agent?: SalesAgent | null
   payment_plan?: PaymentPlan
   installments?: Installment[]
 }
@@ -218,6 +221,8 @@ export interface DealFormData {
   customer_id: string
   product_id: string
   agent_id: string
+  co_agent_id?: string
+  co_agent_split_pct?: number
   deal_price_usd: number
   payment_type: PaymentType
   start_date: string

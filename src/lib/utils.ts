@@ -76,6 +76,70 @@ export function calcCommission(dealPrice: number, commissionRate: number): numbe
   return (dealPrice * commissionRate) / 100
 }
 
+export type PeriodPreset =
+  | 'this_month' | 'last_month' | 'next_month'
+  | 'last_3m' | 'last_6m' | 'this_year' | 'all_time' | 'custom'
+
+export const PERIOD_PRESET_LABELS: Record<PeriodPreset, string> = {
+  this_month: 'This Month',
+  last_month: 'Last Month',
+  next_month: 'Next Month',
+  last_3m: 'Last 3M',
+  last_6m: 'Last 6M',
+  this_year: 'This Year',
+  all_time: 'All Time',
+  custom: 'Custom',
+}
+
+export function getPeriodRange(
+  preset: PeriodPreset,
+  customFrom?: string,
+  customTo?: string
+): { from: string; to: string } {
+  const today = new Date()
+  const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1)
+  const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0)
+  const iso = (d: Date) => d.toISOString().slice(0, 10)
+
+  switch (preset) {
+    case 'this_month':
+      return { from: iso(startOfMonth(today)), to: iso(endOfMonth(today)) }
+    case 'last_month': {
+      const d = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+      return { from: iso(startOfMonth(d)), to: iso(endOfMonth(d)) }
+    }
+    case 'next_month': {
+      const d = new Date(today.getFullYear(), today.getMonth() + 1, 1)
+      return { from: iso(startOfMonth(d)), to: iso(endOfMonth(d)) }
+    }
+    case 'last_3m': {
+      const d = new Date(today.getFullYear(), today.getMonth() - 2, 1)
+      return { from: iso(startOfMonth(d)), to: iso(endOfMonth(today)) }
+    }
+    case 'last_6m': {
+      const d = new Date(today.getFullYear(), today.getMonth() - 5, 1)
+      return { from: iso(startOfMonth(d)), to: iso(endOfMonth(today)) }
+    }
+    case 'this_year':
+      return { from: `${today.getFullYear()}-01-01`, to: `${today.getFullYear()}-12-31` }
+    case 'custom':
+      return { from: customFrom || '', to: customTo || '' }
+    case 'all_time':
+    default:
+      return { from: '', to: '' }
+  }
+}
+
+export function calcAgentShare(
+  deal: { agent_id: string; co_agent_id?: string | null; co_agent_split_pct?: number | null },
+  agentId: string
+): number {
+  if (!deal.co_agent_id) return deal.agent_id === agentId ? 1 : 0
+  if (agentId !== deal.agent_id && agentId !== deal.co_agent_id) return 0
+  const primaryPct = deal.co_agent_split_pct ?? 50
+  return agentId === deal.agent_id ? primaryPct / 100 : (100 - primaryPct) / 100
+}
+
 export function generateInstallmentDates(
   startDate: string,
   count: number,

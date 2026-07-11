@@ -37,7 +37,7 @@ export default function CustomerDetail() {
     queryFn: async () => {
       const { data } = await supabase
         .from('deals')
-        .select('*, product:products(*), agent:sales_agents(*), installments(*)')
+        .select('*, product:products(*), agent:sales_agents!deals_agent_id_fkey(*), installments(*)')
         .eq('customer_id', id!)
         .order('created_at', { ascending: false })
       return (data ?? []) as Deal[]
